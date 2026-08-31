@@ -1,0 +1,1 @@
+{"name":"Gym Tracker","short_name":"GymTrack","start_url":"/","display":"standalone","background_color":"#0a0a0f","lang":"en","scope":"/","description":"Offline gym workout tracker","theme_color":"#0a0a0f","icons":[{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any"},{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"maskable"}]}

@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rutina Semanal</title>
+<style>
+  :root {
+    --bg-primary: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-card: #1c2128;
+    --bg-card-hover: #21262d;
+    --border: #30363d;
+    --border-light: #21262d;
+    --text-primary: #e6edf3;
+    --text-secondary: #8b949e;
+    --text-muted: #6e7681;
+    --accent: #7c6ff7;
+    --accent-dim: #5b4fd4;
+    --radius: 10px;
+    --radius-sm: 6px;
+    --font-sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+    --shadow: 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.4);
+    --shadow-lg: 0 4px 24px rgba(0,0,0,0.5);
+
+    /* tag colors – dark mode adapted */
+    --tag-proj-bg: rgba(139,115,240,0.15);
+    --tag-proj-text: #a99cf0;
+    --tag-exam-bg: rgba(255,140,100,0.15);
+    --tag-exam-text: #f0a080;
+    --tag-web-bg: rgba(255,100,100,0.15);
+    --tag-web-text: #f08080;
+    --tag-gym-bg: rgba(80,200,150,0.15);
+    --tag-gym-text: #60c898;
+    --tag-eng-bg: rgba(80,150,220,0.15);
+    --tag-eng-text: #60a0dc;
+    --tag-inm-bg: rgba(240,180,80,0.15);
+    --tag-inm-text: #dcb860;
+    --tag-rest-bg: rgba(110,118,129,0.12);
+    --tag-rest-text: #8b949e;
+    --tag-free-bg: rgba(200,195,175,0.12);
+    --tag-free-text: #b0ad9c;
+
+    --note-warn-bg: rgba(240,180,80,0.08);
+    --note-warn-border: #d2991d;
+    --note-ok-bg: rgba(80,200,150,0.08);
+    --note-ok-border: #3fb950;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 2rem 1rem 4rem;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .container {
+    width: 100%;
+    max-width: 700px;
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+  .header h1 {
+    font-size: 1.6rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+    margin-bottom: 0.3rem;
+  }
+  .header p {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  /* ─── Tabs ─────────────────────────── */
+  .tabs {
+    display: flex;
+    gap: 0;
+    background: var(--bg-secondary);
+    border-radius: var(--radius);
+    padding: 4px;
+    margin-bottom: 1.5rem;
+    border: 0.5px solid var(--border);
+  }
+  .tab {
+    flex: 1;
+    padding: 9px 8px;
+    font-size: 0.8rem;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: 7px;
+    font-family: var(--font-sans);
+    font-weight: 500;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+  }
+  .tab:hover {
+    color: var(--text-secondary);
+    background: var(--bg-card);
+  }
+  .tab.active {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    box-shadow: var(--shadow);
+    font-weight: 600;
+  }
+
+  /* ─── Panels ───────────────────────── */
+  .panel { display: none; }
+  .panel.active {
+    display: block;
+    animation: fadeSlideIn 0.25s ease;
+  }
+  @keyframes fadeSlideIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ─── Day label ────────────────────── */
+  .day-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    margin-top: 1.5rem;
+  }
+  .day-label:first-child { margin-top: 0; }
+
+  /* ─── Note ─────────────────────────── */
+  .note {
+    font-size: 0.82rem;
+    color: var(--tag-inm-text);
+    line-height: 1.6;
+    padding: 12px 14px;
+    background: var(--note-warn-bg);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--note-warn-border);
+    margin-bottom: 12px;
+  }
+  .note-ok {
+    color: var(--tag-gym-text);
+    background: var(--note-ok-bg);
+    border-left-color: var(--note-ok-border);
+  }
+
+  /* ─── Schedule block ───────────────── */
+  .block {
+    display: grid;
+    grid-template-columns: 110px 1fr auto;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    border: 0.5px solid var(--border-light);
+    margin-bottom: 4px;
+    transition: background 0.15s ease, border-color 0.15s ease,
+                transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .block:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border);
+    transform: translateX(2px);
+    box-shadow: var(--shadow);
+  }
+
+  .btime {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    letter-spacing: -0.02em;
+  }
+  .bname {
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    font-weight: 450;
+  }
+  .btag {
+    font-size: 0.7rem;
+    padding: 3px 10px;
+    border-radius: 20px;
+    white-space: nowrap;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    font-size: 0.65rem;
+  }
+
+  /* tag variants */
+  .t-proj { background: var(--tag-proj-bg); color: var(--tag-proj-text); }
+  .t-exam { background: var(--tag-exam-bg); color: var(--tag-exam-text); }
+  .t-web  { background: var(--tag-web-bg);  color: var(--tag-web-text);  }
+  .t-gym  { background: var(--tag-gym-bg);  color: var(--tag-gym-text);  }
+  .t-eng  { background: var(--tag-eng-bg);  color: var(--tag-eng-text);  }
+  .t-inm  { background: var(--tag-inm-bg);  color: var(--tag-inm-text);  }
+  .t-rest { background: var(--tag-rest-bg); color: var(--tag-rest-text);
+            border: 0.5px solid var(--border); }
+  .t-free { background: var(--tag-free-bg); color: var(--tag-free-text); }
+
+  /* ─── Legend ────────────────────────── */
+  .legend {
+    margin-top: 2rem;
+    padding-top: 1.25rem;
+    border-top: 0.5px solid var(--border);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+  }
+  .legend-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .ld-proj { background: var(--tag-proj-text); }
+  .ld-exam { background: var(--tag-exam-text); }
+  .ld-web  { background: var(--tag-web-text);  }
+  .ld-gym  { background: var(--tag-gym-text);  }
+  .ld-eng  { background: var(--tag-eng-text);  }
+  .ld-inm  { background: var(--tag-inm-text);  }
+  .ld-rest { background: var(--tag-rest-text); }
+  .ld-free { background: var(--tag-free-text); }
+
+  /* ─── Responsive ───────────────────── */
+  @media (max-width: 480px) {
+    body { padding: 1rem 0.5rem 3rem; }
+    .tab { font-size: 0.7rem; padding: 8px 5px; }
+    .block {
+      grid-template-columns: 1fr;
+      gap: 4px;
+      padding: 12px;
+    }
+    .btime { order: -1; font-size: 0.75rem; }
+    .btag { justify-self: start; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>Rutina semanal</h1>
+    <p>Tareas específicas por día</p>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="show('lmv')">Lun / Mié / Vie</button>
+    <button class="tab" onclick="show('mj')">Mar / Jue</button>
+    <button class="tab" onclick="show('sab')">Sábado</button>
+    <button class="tab" onclick="show('dom')">Domingo</button>
+  </div>
+
+  <div id="panel-lmv" class="panel active">
+    <div class="note">Días de proyecto final como tarea central. Dos bloques seguidos en la tarde para avance sostenido.</div>
+    <div class="block"><span class="btime">08:00 – 08:30</span><span class="bname">Despertar, higiene, café</span><span class="btag t-rest">rutina</span></div>
+    <div class="block"><span class="btime">08:30 – 09:00</span><span class="bname">Inglés — vocabulario o podcast activo</span><span class="btag t-eng">inglés</span></div>
+    <div class="block"><span class="btime">09:00 – 10:45</span><span class="bname">Proyecto final de carrera</span><span class="btag t-proj">proyecto</span></div>
+    <div class="block"><span class="btime">10:45 – 11:00</span><span class="bname">Descanso — aléjate de la pantalla</span><span class="btag t-rest">pausa</span></div>
+    <div class="block"><span class="btime">11:00 – 13:30</span><span class="bname">Entrenamiento</span><span class="btag t-gym">gym</span></div>
+    <div class="block"><span class="btime">13:30 – 14:30</span><span class="bname">Almuerzo + recuperación</span><span class="btag t-rest">comida</span></div>
+    <div class="block"><span class="btime">14:30 – 16:15</span><span class="bname">Proyecto final de carrera (continuación)</span><span class="btag t-proj">proyecto</span></div>
+    <div class="block"><span class="btime">16:15 – 16:35</span><span class="bname">Descanso</span><span class="btag t-rest">pausa</span></div>
+    <div class="block"><span class="btime">16:35 – 18:05</span><span class="bname">Examen Diseño de Aplicaciones</span><span class="btag t-exam">examen</span></div>
+    <div class="block"><span class="btime">18:05 – 19:30</span><span class="bname">Cena + tiempo libre</span><span class="btag t-free">libre</span></div>
+    <div class="block"><span class="btime">19:30 – 21:00</span><span class="bname">Investigación inmigración</span><span class="btag t-inm">inmigración</span></div>
+    <div class="block"><span class="btime">21:00 – 22:30</span><span class="bname">Tiempo libre personal</span><span class="btag t-free">libre</span></div>
+    <div class="block"><span class="btime">22:30 – 00:00</span><span class="bname">Rutina nocturna — sin pantallas brillantes</span><span class="btag t-rest">rutina</span></div>
+    <div class="block"><span class="btime">00:00</span><span class="bname">Dormir</span><span class="btag t-rest">sueño</span></div>
+  </div>
+
+  <div id="panel-mj" class="panel">
+    <div class="note">Días mixtos: la mañana va a la web freelance (hasta el 26/07) y después al proyecto. La tarde al examen y al bloque fijo de inmigración.</div>
+    <div class="block"><span class="btime">08:00 – 08:30</span><span class="bname">Despertar, higiene, café</span><span class="btag t-rest">rutina</span></div>
+    <div class="block"><span class="btime">08:30 – 09:00</span><span class="bname">Inglés — vocabulario o podcast activo</span><span class="btag t-eng">inglés</span></div>
+    <div class="block"><span class="btime">09:00 – 10:45</span><span class="bname">Web freelance (hasta 26/07) → Proyecto final desde 27/07</span><span class="btag t-web">web / proyecto</span></div>
+    <div class="block"><span class="btime">10:45 – 11:00</span><span class="bname">Descanso</span><span class="btag t-rest">pausa</span></div>
+    <div class="block"><span class="btime">11:00 – 13:30</span><span class="bname">Entrenamiento</span><span class="btag t-gym">gym</span></div>
+    <div class="block"><span class="btime">13:30 – 14:30</span><span class="bname">Almuerzo + recuperación</span><span class="btag t-rest">comida</span></div>
+    <div class="block"><span class="btime">14:30 – 16:15</span><span class="bname">Examen Diseño de Aplicaciones</span><span class="btag t-exam">examen</span></div>
+    <div class="block"><span class="btime">16:15 – 16:35</span><span class="bname">Descanso</span><span class="btag t-rest">pausa</span></div>
+    <div class="block"><span class="btime">16:35 – 18:05</span><span class="bname">Investigación inmigración (bloque fijo)</span><span class="btag t-inm">inmigración</span></div>
+    <div class="block"><span class="btime">18:05 – 19:30</span><span class="bname">Cena + descanso</span><span class="btag t-free">libre</span></div>
+    <div class="block"><span class="btime">19:30 – 21:00</span><span class="bname">Inglés extendido — gramática, escritura o serie en inglés</span><span class="btag t-eng">inglés</span></div>
+    <div class="block"><span class="btime">21:00 – 22:30</span><span class="bname">Tiempo libre personal</span><span class="btag t-free">libre</span></div>
+    <div class="block"><span class="btime">22:30 – 00:00</span><span class="bname">Rutina nocturna</span><span class="btag t-rest">rutina</span></div>
+    <div class="block"><span class="btime">00:00</span><span class="bname">Dormir</span><span class="btag t-rest">sueño</span></div>
+  </div>
+
+  <div id="panel-sab" class="panel">
+    <div class="note">Día reducido. Un solo bloque de proyecto por la mañana. El resto es tuyo.</div>
+    <div class="block"><span class="btime">08:00 – 08:30</span><span class="bname">Despertar, higiene, café</span><span class="btag t-rest">rutina</span></div>
+    <div class="block"><span class="btime">08:30 – 09:00</span><span class="bname">Inglés — vocabulario o podcast activo</span><span class="btag t-eng">inglés</span></div>
+    <div class="block"><span class="btime">09:00 – 10:45</span><span class="bname">Proyecto final de carrera — revisión o avance moderado</span><span class="btag t-proj">proyecto</span></div>
+    <div class="block"><span class="btime">10:45 – 11:00</span><span class="bname">Descanso</span><span class="btag t-rest">pausa</span></div>
+    <div class="block"><span class="btime">11:00 – 13:30</span><span class="bname">Entrenamiento</span><span class="btag t-gym">gym</span></div>
+    <div class="block"><span class="btime">13:30 en adelante</span><span class="bname">Tiempo libre completo — sin trabajo, sin culpa</span><span class="btag t-free">libre</span></div>
+  </div>
+
+  <div id="panel-dom" class="panel">
+    <div class="note note-ok">Descanso total. El único trabajo permitido: 20 minutos planificando la semana siguiente antes de dormir.</div>
+    <div class="block"><span class="btime">Todo el día</span><span class="bname">Descanso — sin proyecto, sin examen, sin web</span><span class="btag t-free">libre</span></div>
+    <div class="block"><span class="btime">23:00 – 23:20</span><span class="bname">Planificación semana siguiente (máx. 20 min)</span><span class="btag t-rest">rutina</span></div>
+    <div class="block"><span class="btime">00:00</span><span class="bname">Dormir</span><span class="btag t-rest">sueño</span></div>
+  </div>
+
+  <div class="legend">
+    <span class="legend-item"><span class="legend-dot ld-proj"></span>Proyecto</span>
+    <span class="legend-item"><span class="legend-dot ld-exam"></span>Examen</span>
+    <span class="legend-item"><span class="legend-dot ld-web"></span>Web</span>
+    <span class="legend-item"><span class="legend-dot ld-gym"></span>Gym</span>
+    <span class="legend-item"><span class="legend-dot ld-eng"></span>Inglés</span>
+    <span class="legend-item"><span class="legend-dot ld-inm"></span>Inmigración</span>
+    <span class="legend-item"><span class="legend-dot ld-rest"></span>Rutina</span>
+    <span class="legend-item"><span class="legend-dot ld-free"></span>Libre</span>
+  </div>
+
+</div>
+
+<script>
+function show(id){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('panel-'+id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+
+</body>
+</html>
