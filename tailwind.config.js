@@ -8,8 +8,8 @@ export default {
         card: "#14141c",
         card2: "#1c1c26",
         border: "#262636",
-        accent: "#7c5cff",
-        accent2: "#a78bfa",
+        accent: "#ffffff",
+        accent2: "#c7cbe0",
         muted: "#9aa0b2",
         dim: "#5a5f72"
       }

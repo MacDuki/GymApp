@@ -49,7 +49,7 @@ export default function App(){
             <p className="text-sm text-muted mt-1">Unfinished {active.routineName} workout</p>
             <div className="flex gap-3 mt-5">
               <button onClick={async()=>{ await db.setKV('activeWorkout',null); setActive(null); setResumePrompt(false)}} className="flex-1 py-3 rounded-xl bg-card2 border border-border">Discard</button>
-              <button onClick={()=>setResumePrompt(false)} className="flex-1 py-3 rounded-xl bg-accent font-semibold">Resume</button>
+              <button onClick={()=>setResumePrompt(false)} className="flex-1 py-3 rounded-xl bg-accent text-black font-semibold">Resume</button>
             </div>
           </div>
         </div>
@@ -108,7 +108,7 @@ function Home({routines,workouts,onStart,onNav}:{routines:Routine[],workouts:Wor
           <div key={r.id} className="bg-card border border-border rounded-2xl p-4">
             <div className="font-semibold">{r.name}</div>
             <div className="text-xs text-muted mt-1">{r.blocks.length} blocks · {r.blocks.reduce((a,b)=>a+b.exercises.length,0)} exercises</div>
-            <button onClick={()=>onStart(r)} className="mt-3 w-full py-3 rounded-xl bg-accent font-semibold">START WORKOUT</button>
+            <button onClick={()=>onStart(r)} className="mt-3 w-full py-3 rounded-xl bg-accent text-black font-semibold">START WORKOUT</button>
           </div>
         ))}
         {routines.length===0 && <div className="text-sm text-muted text-center py-8">No routines yet — go to Routines to create one</div>}
@@ -137,7 +137,7 @@ function RoutinesView({routines,onChange,onDelete,onStart,detailId,setView}:{rou
         <button onClick={()=>{
           const r:Routine={id:uid(), name:"New Routine", createdAt:Date.now(), blocks:[]}
           onChange([...routines,r]); setEditing(r)
-        }} className="px-4 py-2 rounded-xl bg-accent text-sm font-semibold">+ Create</button>
+        }} className="px-4 py-2 rounded-xl bg-accent text-black text-sm font-semibold">+ Create</button>
       </div>
       {routines.map(r=>(
         <div key={r.id} className="bg-card border border-border rounded-2xl p-4">
@@ -153,7 +153,7 @@ function RoutinesView({routines,onChange,onDelete,onStart,detailId,setView}:{rou
               const nid=uid(); dup.id=nid; dup.blocks.forEach(b=>{b.routineId=nid; const bid=uid(); const old=b.id; b.id=bid; b.exercises.forEach(e=>{e.blockId=bid; e.id=uid()})})
               onChange([...routines,dup])
             }} className="px-4 py-2.5 rounded-xl bg-card2 border border-border text-sm">Dup</button>
-            <button onClick={()=>onStart(r)} className="flex-1 py-2.5 rounded-xl bg-accent font-semibold text-sm">Start</button>
+            <button onClick={()=>onStart(r)} className="flex-1 py-2.5 rounded-xl bg-accent text-black font-semibold text-sm">Start</button>
           </div>
         </div>
       ))}
@@ -206,7 +206,7 @@ function RoutineEditor({routine,onSave,onBack}:{routine:Routine,onSave:(r:Routin
         </div>
       ))}
       <button onClick={addBlock} className="w-full py-3 rounded-xl border border-dashed border-border text-sm">+ Add Block</button>
-      <button onClick={()=>onSave(r)} className="w-full py-3 rounded-xl bg-accent font-semibold">Save Routine</button>
+      <button onClick={()=>onSave(r)} className="w-full py-3 rounded-xl bg-accent text-black font-semibold">Save Routine</button>
     </div>
   )
 }
@@ -255,7 +255,7 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
                 <label className="text-xs text-muted">Weight (kg)<input type="number" inputMode="decimal" value={s.weight||''} onChange={e=>updSet(si,{weight:parseFloat(e.target.value)||0})} className="w-full mt-1 bg-bg border border-border rounded-xl px-3 py-3 text-lg font-semibold" placeholder="0" /></label>
                 <label className="text-xs text-muted">Reps<input type="number" inputMode="numeric" value={s.reps||''} onChange={e=>updSet(si,{reps:parseInt(e.target.value)||0})} className="w-full mt-1 bg-bg border border-border rounded-xl px-3 py-3 text-lg font-semibold" placeholder="0" /></label>
               </div>
-              <button onClick={()=>{ updSet(si,{completed:!s.completed}); if(!s.completed && ex.restSeconds>0){ setTimer(ex.restSeconds); setRun(true)}}} className={`w-full mt-3 py-3.5 rounded-xl font-semibold text-lg ${s.completed?'bg-card2 border border-border':'bg-accent'}`}>{s.completed?'↩ Undo':'✓ COMPLETE SET'}</button>
+              <button onClick={()=>{ updSet(si,{completed:!s.completed}); if(!s.completed && ex.restSeconds>0){ setTimer(ex.restSeconds); setRun(true)}}} className={`w-full mt-3 py-3.5 rounded-xl font-semibold text-lg ${s.completed?'bg-card2 text-white border border-border':'bg-accent text-black'}`}>{s.completed?'↩ Undo':'✓ COMPLETE SET'}</button>
             </div>
           ))}
         </div>
@@ -263,7 +263,7 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
         <div className="bg-card border border-border rounded-2xl p-4 flex flex-col items-center gap-3">
           <div className="text-3xl font-mono font-bold">{String(Math.floor(timer/60)).padStart(2,'0')}:{String(timer%60).padStart(2,'0')}</div>
           <div className="flex gap-2 w-full">
-            <button onClick={()=>{setTimer(ex.restSeconds); setRun(true)}} className="flex-1 py-3 rounded-xl bg-accent font-semibold">START REST</button>
+            <button onClick={()=>{setTimer(ex.restSeconds); setRun(true)}} className="flex-1 py-3 rounded-xl bg-accent text-black font-semibold">START REST</button>
             <button onClick={()=>setRun(!run)} className="px-6 py-3 rounded-xl bg-card2 border border-border">{run?'Pause':'Resume'}</button>
           </div>
           <div className="flex gap-2">
@@ -282,7 +282,7 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
           <div className="text-xs tracking-widest text-dim">ALL EXERCISES</div>
           {workout.exercises.map((e,i)=>{
             const done=e.sets.every(s=>s.completed)
-            return <button key={i} onClick={()=>setIdx(i)} className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm flex justify-between ${i===idx?'bg-accent border-accent':'bg-card border-border'} ${done?'opacity-60':''}`}><span>{e.blockName} · {e.exerciseName}</span><span>{e.sets.filter(s=>s.completed).length}/{e.sets.length}</span></button>
+            return <button key={i} onClick={()=>setIdx(i)} className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm flex justify-between ${i===idx?'bg-accent border-accent text-black':'bg-card text-white border-border'} ${done?'opacity-60':''}`}><span>{e.blockName} · {e.exerciseName}</span><span>{e.sets.filter(s=>s.completed).length}/{e.sets.length}</span></button>
           })}
         </div>
 
@@ -359,7 +359,7 @@ function ProgressView({workouts,bws,onAddBw,onDelBw}:{workouts:Workout[],bws:Bod
         <div className="font-semibold text-sm">Bodyweight</div>
         <div className="flex gap-2">
           <input value={bw} onChange={e=>setBw(e.target.value)} placeholder="kg" type="number" inputMode="decimal" className="flex-1 bg-bg border border-border rounded-xl px-3 py-2.5" />
-          <button onClick={()=>{ const v=parseFloat(bw); if(v>0){onAddBw(v); setBw('')}}} className="px-6 py-2.5 rounded-xl bg-accent font-semibold">Add</button>
+          <button onClick={()=>{ const v=parseFloat(bw); if(v>0){onAddBw(v); setBw('')}}} className="px-6 py-2.5 rounded-xl bg-accent text-black font-semibold">Add</button>
         </div>
         {bws.length>1 && (
           <div className="h-20 flex items-end gap-1">
@@ -401,3 +401,5 @@ function Settings({routines,workouts,bws,active,onImport,onClear}:{routines:Rout
     </div>
   )
 }
+
+
