@@ -5,6 +5,7 @@ import { seedRoutines } from './data/seed'
 import { uid } from './utils/id'
 import { workoutVolume } from './utils/volume'
 import { suggestion, previousSets } from './utils/progression'
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } from 'recharts'
 
 type Tab = 'home'|'routines'|'history'|'progress'|'settings'
 type View = { tab: Tab, routineId?: string, workoutId?: string }
@@ -68,7 +69,7 @@ export default function App(){
           setActive(w); setResumePrompt(false)
         }} detailId={view.routineId} setView={setView} />}
         {view.tab==='history' && <HistoryView workouts={workouts} onSelect={id=>setView({tab:'history', workoutId:id})} selected={view.workoutId} onDelete={async(id)=>{await db.delWorkout(id); refreshWorkouts(); setView({tab:'history'})}} />}
-        {view.tab==='progress' && <ProgressView workouts={workouts} bws={bws} onAddBw={async(w)=>{
+        {view.tab==='progress' && <ProgressView routines={routines} workouts={workouts} bws={bws} onAddBw={async(w)=>{
           const e:BodyweightEntry={id:uid(), date:new Date().toISOString().slice(0,10), weight:w}; await db.saveBodyweight(e); setBws(v=>[...v,e].sort((a,b)=>a.date.localeCompare(b.date)))
         }} onDelBw={async(id)=>{await db.delBodyweight(id); setBws(v=>v.filter(x=>x.id!==id))}} />}
         {view.tab==='settings' && <Settings routines={routines} workouts={workouts} bws={bws} active={active} onImport={async(data)=>{
@@ -324,58 +325,129 @@ function HistoryView({workouts,onSelect,selected,onDelete}:{workouts:Workout[],o
   )
 }
 
-function ProgressView({workouts,bws,onAddBw,onDelBw}:{workouts:Workout[],bws:BodyweightEntry[],onAddBw:(w:number)=>void,onDelBw:(id:string)=>void}){
-  const [ex,setEx]=useState<string>('')
-  const names=[...new Set(workouts.flatMap(w=>w.exercises.map(e=>e.exerciseName)))].sort()
-  useEffect(()=>{ if(!ex && names[0]) setEx(names[0])},[names,ex])
-  const data=workouts.filter(w=>w.exercises.some(e=>e.exerciseName===ex)).sort((a,b)=>a.completedAt!-b.completedAt!).map(w=>{
-    const e=w.exercises.find(x=>x.exerciseName===ex)!; const vol=e.sets.filter(s=>s.completed).reduce((a,s)=>a+s.weight*s.reps,0); const maxW=Math.max(...e.sets.map(s=>s.weight),0); return {date:new Date(w.completedAt!).toLocaleDateString(), vol, maxW, reps: e.sets.map(s=>s.reps).join('/')}
-  })
-  const pr = data.length? {max: Math.max(...data.map(d=>d.maxW)), vol: Math.max(...data.map(d=>d.vol))}:null
+const ROUTINE_PRINCIPAL = /principal/i
+
+function ProgressView({routines,workouts,bws,onAddBw,onDelBw}:{routines:Routine[],workouts:Workout[],bws:BodyweightEntry[],onAddBw:(w:number)=>void,onDelBw:(id:string)=>void}){
+  const done=workouts.filter(w=>w.completedAt)
+  const sortedRoutines=[...routines].sort((a,b)=>a.createdAt-b.createdAt)
+  const [routineId,setRoutineId]=useState<string>(sortedRoutines[0]?.id||'')
+  useEffect(()=>{ if(sortedRoutines.length && !routineId) setRoutineId(sortedRoutines[0].id) },[sortedRoutines,routineId])
+  const routine=sortedRoutines.find(r=>r.id===routineId)
+
+  const mainBlocks = routine? routine.blocks
+    .filter(b=>ROUTINE_PRINCIPAL.test(b.name))
+    .sort((a,b)=>a.order-b.order) : []
+  const mainBlock = mainBlocks[0]
+  const mainExercises = mainBlock? [...mainBlock.exercises].sort((a,b)=>a.order-b.order) : []
+
   const [bw,setBw]=useState('')
+  const [bwShow,setBwShow]=useState(true)
+
+  const bwData=bws.map(b=>({date:fmtDate(b.date), body: b.weight}))
+
   return (
     <div className="pt-4 space-y-5">
-      <h2 className="text-xl font-bold">Progress</h2>
-      <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-        <select value={ex} onChange={e=>setEx(e.target.value)} className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-sm">
-          {names.map(n=><option key={n} value={n}>{n}</option>)}
+      <h2 className="text-xl font-bold">Progression</h2>
+
+      <label className="block">
+        <span className="text-xs tracking-widest text-dim">ROUTINE</span>
+        <select value={routineId} onChange={e=>setRoutineId(e.target.value)} className="w-full mt-1.5 bg-card border border-border rounded-xl px-3 py-3 text-sm font-medium">
+          {sortedRoutines.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
-        {data.length? <>
-          <div className="text-xs text-muted">{data.length} workouts</div>
-          <div className="flex gap-6 text-sm"><span>PR weight: <b>{pr!.max} kg</b></span><span>PR vol: <b>{pr!.vol} kg</b></span></div>
-          <div className="h-24 flex items-end gap-1">
-            {data.map((d,i)=>{
-              const h = pr!.max? (d.maxW/pr!.max*80+8):8
-              return <div key={i} className="flex-1 bg-accent rounded-t" style={{height: h}} title={`${d.date} ${d.maxW}kg`} />
-            })}
-          </div>
-          <div className="space-y-1 max-h-48 overflow-auto">
-            {data.map((d,i)=><div key={i} className="flex justify-between text-xs border-b border-border/50 py-1"><span>{d.date}</span><span>{d.maxW} kg · {d.vol} vol</span></div>)}
-          </div>
-        </>: <div className="text-sm text-muted">No data for selected exercise</div>}
-      </div>
+      </label>
+
+      {!routine && <div className="text-sm text-muted text-center py-8">No routines available.</div>}
+
+      {routine && <>
+        {mainBlock && <>
+          <div className="text-xs tracking-widest text-dim">{mainBlock.name.toUpperCase()} · {mainExercises.length} ejercicios</div>
+          {mainExercises.map(ex=> <ExerciseChart key={ex.id} name={ex.name} workouts={done} />)}
+        </>}
+        {!mainBlock && <div className="text-sm text-muted bg-card border border-border rounded-2xl p-4">Esta rutina no tiene un bloque «Rutina principal».</div>}
+      </>}
 
       <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-        <div className="font-semibold text-sm">Bodyweight</div>
-        <div className="flex gap-2">
-          <input value={bw} onChange={e=>setBw(e.target.value)} placeholder="kg" type="number" inputMode="decimal" className="flex-1 bg-bg border border-border rounded-xl px-3 py-2.5" />
-          <button onClick={()=>{ const v=parseFloat(bw); if(v>0){onAddBw(v); setBw('')}}} className="px-6 py-2.5 rounded-xl bg-accent text-black font-semibold">Add</button>
+        <div className="flex justify-between items-center">
+          <div className="font-semibold text-sm">Peso corporal</div>
+          <button onClick={()=>setBwShow(v=>!v)} className="text-xs px-2.5 py-1 rounded-lg bg-card2 border border-border">{bwShow?'Hide':'Show'}</button>
         </div>
-        {bws.length>1 && (
-          <div className="h-20 flex items-end gap-1">
-            {(() => {
-              const min=Math.min(...bws.map(b=>b.weight)), max=Math.max(...bws.map(b=>b.weight)), range=max-min||1
-              return bws.map(b=> <div key={b.id} className="flex-1 bg-emerald-500 rounded-t" style={{height: ((b.weight-min)/range*60+12)}} title={`${b.date} ${b.weight}`} />)
-            })()}
-          </div>
+        <div className="flex gap-2">
+          <input value={bw} onChange={e=>setBw(e.target.value)} placeholder="kg" type="number" inputMode="decimal" className="flex-1 bg-bg border border-border rounded-xl px-3 py-3" />
+          <button onClick={()=>{ const v=parseFloat(bw); if(v>0){onAddBw(v); setBw('')}}} className="px-6 py-3 rounded-xl bg-accent text-black font-semibold">Add</button>
+        </div>
+        {bwShow && (
+          bwData.length>1
+            ? <div className="h-32 w-full"><ResponsiveContainer width="100%" height="100%"><LineChart data={bwData} margin={{top:6,right:8,left:8,bottom:0}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff14" />
+                <XAxis dataKey="date" tick={{fill:'#9ca3af',fontSize:10}} tickLine={false} axisLine={{stroke:'#ffffff22'}} minTickGap={24} />
+                <YAxis domain={['auto','auto']} tick={{fill:'#9ca3af',fontSize:10}} tickLine={false} axisLine={false} width={34} />
+                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabel} itemStyle={tooltipItem} />
+                <Line type="monotone" dataKey="body" name="Peso" stroke="#10b981" strokeWidth={2.5} dot={{r:3,fill:'#10b981'}} activeDot={{r:5}} connectNulls />
+              </LineChart></ResponsiveContainer></div>
+            : <div className="text-xs text-muted">Añade al menos 2 mediciones para ver la línea.</div>
         )}
         <div className="space-y-1">
           {bws.slice().reverse().map(b=>(
-            <div key={b.id} className="flex justify-between text-sm py-1 border-b border-border/50"><span>{b.date}</span><span className="flex gap-3">{b.weight} kg <button onClick={()=>onDelBw(b.id)} className="text-red-400 text-xs">✕</button></span></div>
+            <div key={b.id} className="flex justify-between text-sm py-1.5 border-b border-border/50 last:border-0"><span>{b.date}</span><span className="flex gap-3">{b.weight} kg <button onClick={()=>onDelBw(b.id)} className="text-red-400 text-xs">✕</button></span></div>
           ))}
-          {!bws.length && <div className="text-xs text-muted">No entries</div>}
+          {!bws.length && <div className="text-xs text-muted">No hay mediciones todavía.</div>}
         </div>
       </div>
+    </div>
+  )
+}
+
+const tooltipStyle={ background:'#16161d', border:'1px solid #ffffff22', borderRadius:12, padding:'8px 10px', fontSize:12, boxShadow:'0 8px 24px rgba(0,0,0,.4)' }
+const tooltipLabel={ color:'#9ca3af', fontSize:11, fontWeight:600, marginBottom:4 }
+const tooltipItem={ color:'#fff', fontSize:13 }
+
+function ExerciseChart({name,workouts}:{name:string,workouts:Workout[]}){
+  const history=workouts
+    .filter(w=>w.exercises.some(e=>e.exerciseName===name))
+    .sort((a,b)=>a.completedAt!-b.completedAt!)
+  const data=history.map(w=>{
+    const e=w.exercises.find(x=>x.exerciseName===name)!
+    const c=e.sets.filter(s=>s.completed&&s.weight>0)
+    const maxW=c.length?Math.max(...c.map(s=>s.weight)):0
+    const meanW=c.length?c.reduce((a,s)=>a+s.weight,0)/c.length:0
+    const vol=c.reduce((a,s)=>a+s.weight*s.reps,0)
+    const maxReps=c.length?Math.max(...c.map(s=>s.reps)):0
+    return {date:new Date(w.completedAt!).toLocaleDateString(), maxW, meanW, vol, maxReps, sets:c.length}
+  })
+  const [metric,setMetric]=useState<'maxW'|'meanW'|'vol'|'maxReps'>('maxW')
+  const opts:{k:typeof metric,l:string,unit:string,color:string}[]=[
+    {k:'maxW',l:'Max Peso',unit:' kg',color:'#fbbf24'},
+    {k:'meanW',l:'Promedio',unit:' kg',color:'#60a5fa'},
+    {k:'vol',l:'Volumen',unit:'',color:'#a78bfa'},
+    {k:'maxReps',l:'Max Reps',unit:'',color:'#34d399'},
+  ]
+  const o=opts.find(x=>x.k===metric)!
+  const pr=data.length?Math.max(...data.map(d=>d[metric])):0
+  return (
+    <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="font-semibold text-sm leading-tight">{name}</div>
+        <div className="text-xs text-accent2 whitespace-nowrap">{data.length>0?`PR ${pr}${o.unit}`:'—'}</div>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {opts.map(x=>(
+          <button key={x.k} onClick={()=>setMetric(x.k)} className={`text-[11px] px-2.5 py-1 rounded-lg border ${metric===x.k?'bg-accent border-accent text-black font-semibold':'bg-card2 border-border text-muted'}`}>{x.l}</button>
+        ))}
+      </div>
+      {data.length>1 ? (
+        <div className="h-40 w-full"><ResponsiveContainer width="100%" height="100%"><LineChart data={data} margin={{top:6,right:8,left:8,bottom:0}}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#ffffff14" />
+          <XAxis dataKey="date" tick={{fill:'#9ca3af',fontSize:10}} tickLine={false} axisLine={{stroke:'#ffffff22'}} minTickGap={24} />
+          <YAxis domain={['auto','auto']} tick={{fill:'#9ca3af',fontSize:10}} tickLine={false} axisLine={false} width={34} />
+          <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabel} itemStyle={tooltipItem} formatter={(v:any)=>[`${Number(v).toLocaleString()}${o.unit}`,o.l]} />
+          <Line type="monotone" dataKey={metric} name={o.l} stroke={o.color} strokeWidth={2.5} dot={{r:3,fill:o.color}} activeDot={{r:5}} connectNulls />
+        </LineChart></ResponsiveContainer></div>
+      ): data.length===1 ? (
+        <div className="text-xs text-muted py-4 text-center">Solo hay 1 registro. Completa más sesiones del ejercicio «{name}» (actual: {data[0][metric]}{o.unit}).</div>
+      ): (
+        <div className="text-xs text-muted py-4 text-center">Sin datos. Haz {name} en una sesión para ver su progresión.</div>
+      )}
+      {data.length>1 && <div className="text-[11px] text-muted">{data.length} sesiones · línea de evolución</div>}
     </div>
   )
 }
@@ -400,6 +472,12 @@ function Settings({routines,workouts,bws,active,onImport,onClear}:{routines:Rout
       <div className="text-xs text-muted text-center">Offline PWA · Data stored locally in IndexedDB<br/>Install via Share → Add to Home Screen</div>
     </div>
   )
+}
+
+function fmtDate(iso:string){
+  const d=new Date(iso.length===10? iso+'T00:00:00' : iso)
+  if(isNaN(d.getTime())) return iso
+  return d.toLocaleDateString()
 }
 
 
