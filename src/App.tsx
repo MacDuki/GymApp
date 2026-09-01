@@ -1,14 +1,21 @@
 import { useEffect, useState, useRef } from 'react'
-import type { Routine, Workout, BodyweightEntry, WorkoutExercise } from './types'
+import type { Routine, Workout, BodyweightEntry, WorkoutExercise, Unit } from './types'
 import * as db from './db'
 import { seedRoutines } from './data/seed'
 import { uid } from './utils/id'
 import { workoutVolume } from './utils/volume'
 import { suggestion, previousSets } from './utils/progression'
+import { UNIT_LABEL, UNIT_NAME, resolveUnit } from './utils/units'
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } from 'recharts'
 
 type Tab = 'home'|'routines'|'history'|'progress'|'settings'
 type View = { tab: Tab, routineId?: string, workoutId?: string }
+
+function buildWorkout(r:Routine):Workout{
+  const exs:WorkoutExercise[]=[]
+  r.blocks.sort((a,b)=>a.order-b.order).forEach(b=>b.exercises.sort((a,b)=>a.order-b.order).forEach(e=>exs.push({exerciseId:e.id, exerciseName:e.name, blockName:b.name, targetSets:e.sets, targetReps:e.targetReps, restSeconds:e.restSeconds, unit:resolveUnit(e), sets:Array.from({length:e.sets},()=>({weight:0,reps:0,completed:false}))})))
+  return {id:uid(), routineId:r.id, routineName:r.name, snapshot:r, startedAt:Date.now(), exercises:exs}
+}
 
 export default function App(){
   const [view,setView]=useState<View>({tab:'home'})
@@ -57,15 +64,11 @@ export default function App(){
       )}
       <div className="px-4 pt-[calc(12px+env(safe-area-inset-top))]">
         {view.tab==='home' && <Home routines={routines} workouts={workouts} onStart={(r)=>{
-          const exs:WorkoutExercise[]=[]
-          r.blocks.sort((a,b)=>a.order-b.order).forEach(b=>b.exercises.sort((a,b)=>a.order-b.order).forEach(e=>exs.push({exerciseId:e.id, exerciseName:e.name, blockName:b.name, targetSets:e.sets, targetReps:e.targetReps, restSeconds:e.restSeconds, sets:Array.from({length:e.sets},()=>({weight:0,reps:0,completed:false}))})))
-          const w:Workout={id:uid(), routineId:r.id, routineName:r.name, snapshot:r, startedAt:Date.now(), exercises:exs}
+          const w=buildWorkout(r)
           setActive(w); setResumePrompt(false)
         }} onNav={setView} />}
         {view.tab==='routines' && <RoutinesView routines={routines} onChange={saveRoutines} onDelete={async(id)=>{ await db.delRoutine(id); setRoutines(v=>v.filter(x=>x.id!==id))}} onStart={r=>{
-          const exs:WorkoutExercise[]=[]
-          r.blocks.sort((a,b)=>a.order-b.order).forEach(b=>b.exercises.sort((a,b)=>a.order-b.order).forEach(e=>exs.push({exerciseId:e.id, exerciseName:e.name, blockName:b.name, targetSets:e.sets, targetReps:e.targetReps, restSeconds:e.restSeconds, sets:Array.from({length:e.sets},()=>({weight:0,reps:0,completed:false}))})))
-          const w:Workout={id:uid(), routineId:r.id, routineName:r.name, snapshot:r, startedAt:Date.now(), exercises:exs}
+          const w=buildWorkout(r)
           setActive(w); setResumePrompt(false)
         }} detailId={view.routineId} setView={setView} />}
         {view.tab==='history' && <HistoryView workouts={workouts} onSelect={id=>setView({tab:'history', workoutId:id})} selected={view.workoutId} onDelete={async(id)=>{await db.delWorkout(id); refreshWorkouts(); setView({tab:'history'})}} />}
@@ -200,6 +203,14 @@ function RoutineEditor({routine,onSave,onBack}:{routine:Routine,onSave:(r:Routin
                 <label className="text-xs text-muted">Reps <input value={e.targetReps} onChange={ev=>updEx(b.id,e.id,{targetReps:ev.target.value})} className="w-full mt-1 bg-card border border-border rounded-lg px-2 py-2" /></label>
                 <label className="text-xs text-muted">Rest(s) <input type="number" value={e.restSeconds} onChange={ev=>updEx(b.id,e.id,{restSeconds:parseInt(ev.target.value)||0})} className="w-full mt-1 bg-card border border-border rounded-lg px-2 py-2" /></label>
               </div>
+              <label className="text-xs text-muted">Unidad de medida
+                <select value={e.unit||''} onChange={ev=>updEx(b.id,e.id,{unit:(ev.target.value||undefined) as Unit|undefined})} className="w-full mt-1 bg-card border border-border rounded-lg px-2 py-2 text-sm">
+                  <option value="">Auto ({UNIT_NAME[resolveUnit(e)]})</option>
+                  <option value="weight">Peso (kg)</option>
+                  <option value="reps">Repeticiones</option>
+                  <option value="time">Tiempo (segundos)</option>
+                </select>
+              </label>
               <input value={e.notes||''} onChange={ev=>updEx(b.id,e.id,{notes:ev.target.value})} placeholder="Notes" className="w-full bg-card border border-border rounded-lg px-2 py-1.5 text-xs" />
             </div>
           ))}
@@ -217,15 +228,22 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
   const [timer,setTimer]=useState(0)
   const [run,setRun]=useState(false)
   const ex=workout.exercises[idx]
+  const unit=resolveUnit(ex)
   const prev=previousSets(ex.exerciseName, workouts)
   const sug=suggestion(ex.exerciseName, ex.targetSets, ex.targetReps, workouts)
   const curSetIdx=ex.sets.findIndex(s=>!s.completed)
+  const doneCount=ex.sets.filter(s=>s.completed).length
   useEffect(()=>{ if(!run) return; const id=setInterval(()=>setTimer(t=>t>0? t-1:0),1000); return ()=>clearInterval(id)},[run])
   useEffect(()=>{ if(timer===0) setRun(false)},[timer])
   const updSet=(si:number, patch:Partial<any>)=>{
     const n={...workout, exercises: workout.exercises.map((e,i)=> i!==idx?e:{...e, sets:e.sets.map((s,j)=> j===si?{...s,...patch}:s)})}
     onChange(n); onSave(n)
   }
+  const addSet=()=>{
+    const n={...workout, exercises: workout.exercises.map((e,i)=> i!==idx?e:{...e, sets:[...e.sets,{weight:0,reps:0,completed:false}]})}
+    onChange(n); onSave(n)
+  }
+  const fmtSet=(s:typeof ex.sets[number]):string=> unit==='time'? `${s.weight||0}${UNIT_LABEL[unit]}` : unit==='reps'? `${s.reps||0} reps` : `${s.weight||0} kg × ${s.reps||0}`
   const pct=Math.round((workout.exercises.filter(e=>e.sets.every(s=>s.completed)).length/workout.exercises.length)*100)
   return (
     <div className="min-h-screen bg-bg pb-6">
@@ -234,31 +252,38 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
         <button onClick={()=>{ if(confirm('Discard workout?')) onDiscard()}} className="text-xs px-3 py-1.5 rounded-lg bg-card2 border border-border">Exit</button>
       </div>
       <div className="px-4 pt-4 space-y-4">
-        <div className="h-1 bg-card2 rounded-full overflow-hidden"><div className="h-full bg-accent" style={{width: `${(idx+1)/workout.exercises.length*100}%`}} /></div>
+        <div className="h-1 bg-card2 rounded-full overflow-hidden"><div className="h-full bg-accent" style={{width: `${Math.min(1,(idx+1)/workout.exercises.length)*100}%`}} /></div>
         <div className="bg-card border border-border rounded-2xl p-4">
           <div className="text-xs tracking-widest text-dim">{ex.blockName.toUpperCase()}</div>
           <div className="text-xl font-bold mt-1">{ex.exerciseName}</div>
           <div className="text-xs text-muted mt-1">{ex.targetSets} × {ex.targetReps} · rest {ex.restSeconds}s</div>
-          {ex.sets.some(s=>s.completed) && <div className="text-xs text-emerald-400 mt-1">{ex.sets.filter(s=>s.completed).length}/{ex.sets.length} sets done</div>}
+          <div className="text-xs text-emerald-400 mt-1">{doneCount}/{ex.targetSets} sets done</div>
         </div>
 
         <div className="bg-card border border-border rounded-2xl p-4 space-y-2">
           <div className="text-xs font-semibold tracking-widest text-dim">PREVIOUS</div>
-          {prev? prev.map((s,i)=><div key={i} className="text-sm">{s.weight} kg × {s.reps} {s.completed?'✓':''}</div>): <div className="text-sm text-muted">No previous workout</div>}
-          {sug && <div className="mt-2 bg-accent/10 border border-accent/20 rounded-xl p-3"><div className="text-xs text-accent2">Suggested: {sug.text}</div><div className="text-[11px] text-muted">{sug.reason}</div></div>}
+          {prev? prev.map((s,i)=><div key={i} className="text-sm">{fmtSet(s)} {s.completed?'✓':''}</div>): <div className="text-sm text-muted">No previous workout</div>}
+          {unit==='weight' && sug && <div className="mt-2 bg-accent/10 border border-accent/20 rounded-xl p-3"><div className="text-xs text-accent2">Suggested: {sug.text}</div><div className="text-[11px] text-muted">{sug.reason}</div></div>}
         </div>
 
         <div className="space-y-3">
           {ex.sets.map((s,si)=>(
             <div key={si} className={`rounded-2xl p-4 border ${s.completed?'bg-emerald-500/10 border-emerald-500/30':'bg-card border-border'}`}>
               <div className="flex justify-between items-center mb-3"><span className="font-semibold text-sm">SET {si+1} {si===curSetIdx && !s.completed && <span className="text-accent2 text-xs ml-2">● current</span>}</span><span className={`text-xs px-2 py-1 rounded-full ${s.completed?'bg-emerald-500 text-white':'bg-card2 border border-border'}`}>{s.completed?'Done':'Pending'}</span></div>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="text-xs text-muted">Weight (kg)<input type="number" inputMode="decimal" value={s.weight||''} onChange={e=>updSet(si,{weight:parseFloat(e.target.value)||0})} className="w-full mt-1 bg-bg border border-border rounded-xl px-3 py-3 text-lg font-semibold" placeholder="0" /></label>
-                <label className="text-xs text-muted">Reps<input type="number" inputMode="numeric" value={s.reps||''} onChange={e=>updSet(si,{reps:parseInt(e.target.value)||0})} className="w-full mt-1 bg-bg border border-border rounded-xl px-3 py-3 text-lg font-semibold" placeholder="0" /></label>
-              </div>
+              {unit==='time' ? (
+                <label className="text-xs text-muted block">Tiempo (segundos)<input type="number" inputMode="decimal" value={s.weight||''} onChange={e=>updSet(si,{weight:parseFloat(e.target.value)||0})} className="w-full mt-1 bg-bg border border-border rounded-xl px-3 py-3 text-lg font-semibold" placeholder="0" /></label>
+              ) : unit==='reps' ? (
+                <label className="text-xs text-muted block">Repeticiones<input type="number" inputMode="numeric" value={s.reps||''} onChange={e=>updSet(si,{reps:parseInt(e.target.value)||0})} className="w-full mt-1 bg-bg border border-border rounded-xl px-3 py-3 text-lg font-semibold" placeholder="0" /></label>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="text-xs text-muted">Weight (kg)<input type="number" inputMode="decimal" value={s.weight||''} onChange={e=>updSet(si,{weight:parseFloat(e.target.value)||0})} className="w-full mt-1 bg-bg border border-border rounded-xl px-3 py-3 text-lg font-semibold" placeholder="0" /></label>
+                  <label className="text-xs text-muted">Reps<input type="number" inputMode="numeric" value={s.reps||''} onChange={e=>updSet(si,{reps:parseInt(e.target.value)||0})} className="w-full mt-1 bg-bg border border-border rounded-xl px-3 py-3 text-lg font-semibold" placeholder="0" /></label>
+                </div>
+              )}
               <button onClick={()=>{ updSet(si,{completed:!s.completed}); if(!s.completed && ex.restSeconds>0){ setTimer(ex.restSeconds); setRun(true)}}} className={`w-full mt-3 py-3.5 rounded-xl font-semibold text-lg ${s.completed?'bg-card2 text-white border border-border':'bg-accent text-black'}`}>{s.completed?'↩ Undo':'✓ COMPLETE SET'}</button>
             </div>
           ))}
+          <button onClick={addSet} className="w-full py-3 rounded-xl bg-card2 border border-dashed border-border text-sm">+ Add extra set (currently {ex.sets.length}/{ex.targetSets})</button>
         </div>
 
         <div className="bg-card border border-border rounded-2xl p-4 flex flex-col items-center gap-3">
@@ -283,7 +308,7 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
           <div className="text-xs tracking-widest text-dim">ALL EXERCISES</div>
           {workout.exercises.map((e,i)=>{
             const done=e.sets.every(s=>s.completed)
-            return <button key={i} onClick={()=>setIdx(i)} className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm flex justify-between ${i===idx?'bg-accent border-accent text-black':'bg-card text-white border-border'} ${done?'opacity-60':''}`}><span>{e.blockName} · {e.exerciseName}</span><span>{e.sets.filter(s=>s.completed).length}/{e.sets.length}</span></button>
+            return <button key={i} onClick={()=>setIdx(i)} className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm flex justify-between ${i===idx?'bg-accent border-accent text-black':'bg-card text-white border-border'} ${done?'opacity-60':''}`}><span>{e.blockName} · {e.exerciseName}</span><span>{e.sets.filter(s=>s.completed).length}/{e.targetSets}</span></button>
           })}
         </div>
 
@@ -306,7 +331,7 @@ function HistoryView({workouts,onSelect,selected,onDelete}:{workouts:Workout[],o
       {sel.exercises.map((e,i)=>(
         <div key={i} className="bg-card border border-border rounded-xl p-3">
           <div className="text-xs text-dim">{e.blockName}</div><div className="font-medium text-sm">{e.exerciseName}</div>
-          <div className="mt-2 space-y-1">{e.sets.map((s,j)=><div key={j} className="text-sm flex justify-between"><span>{s.weight} × {s.reps}</span><span className={s.completed?'text-emerald-400':'text-dim'}>{s.completed?'✓':''}</span></div>)}</div>
+          <div className="mt-2 space-y-1">{e.sets.map((s,j)=>{ const u=resolveUnit(e); return <div key={j} className="text-sm flex justify-between"><span>{u==='time'? `${s.weight||0}s` : u==='reps'? `${s.reps||0} reps` : `${s.weight} × ${s.reps}`}</span><span className={s.completed?'text-emerald-400':'text-dim'}>{s.completed?'✓':''}</span></div>})}</div>
         </div>
       ))}
       <button onClick={()=>{ if(confirm('Delete workout?')) onDelete(sel.id)}} className="w-full py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400">Delete Workout</button>
@@ -361,7 +386,7 @@ function ProgressView({routines,workouts,bws,onAddBw,onDelBw}:{routines:Routine[
       {routine && <>
         {mainBlock && <>
           <div className="text-xs tracking-widest text-dim">{mainBlock.name.toUpperCase()} · {mainExercises.length} ejercicios</div>
-          {mainExercises.map(ex=> <ExerciseChart key={ex.id} name={ex.name} workouts={done} />)}
+          {mainExercises.map(ex=> <ExerciseChart key={ex.id} name={ex.name} unit={resolveUnit(ex)} workouts={done} />)}
         </>}
         {!mainBlock && <div className="text-sm text-muted bg-card border border-border rounded-2xl p-4">Esta rutina no tiene un bloque «Rutina principal».</div>}
       </>}
@@ -372,7 +397,7 @@ function ProgressView({routines,workouts,bws,onAddBw,onDelBw}:{routines:Routine[
           <button onClick={()=>setBwShow(v=>!v)} className="text-xs px-2.5 py-1 rounded-lg bg-card2 border border-border">{bwShow?'Hide':'Show'}</button>
         </div>
         <div className="flex gap-2">
-          <input value={bw} onChange={e=>setBw(e.target.value)} placeholder="kg" type="number" inputMode="decimal" className="flex-1 bg-bg border border-border rounded-xl px-3 py-3" />
+          <input value={bw} onChange={e=>setBw(e.target.value)} placeholder="kg" type="number" inputMode="decimal" step="0.1" className="flex-1 bg-bg border border-border rounded-xl px-3 py-3" />
           <button onClick={()=>{ const v=parseFloat(bw); if(v>0){onAddBw(v); setBw('')}}} className="px-6 py-3 rounded-xl bg-accent text-black font-semibold">Add</button>
         </div>
         {bwShow && (
@@ -401,27 +426,39 @@ const tooltipStyle={ background:'#16161d', border:'1px solid #ffffff22', borderR
 const tooltipLabel={ color:'#9ca3af', fontSize:11, fontWeight:600, marginBottom:4 }
 const tooltipItem={ color:'#fff', fontSize:13 }
 
-function ExerciseChart({name,workouts}:{name:string,workouts:Workout[]}){
+function ExerciseChart({name,unit,workouts}:{name:string,unit:Unit,workouts:Workout[]}){
   const history=workouts
     .filter(w=>w.exercises.some(e=>e.exerciseName===name))
     .sort((a,b)=>a.completedAt!-b.completedAt!)
   const data=history.map(w=>{
     const e=w.exercises.find(x=>x.exerciseName===name)!
-    const c=e.sets.filter(s=>s.completed&&s.weight>0)
-    const maxW=c.length?Math.max(...c.map(s=>s.weight)):0
-    const meanW=c.length?c.reduce((a,s)=>a+s.weight,0)/c.length:0
-    const vol=c.reduce((a,s)=>a+s.weight*s.reps,0)
-    const maxReps=c.length?Math.max(...c.map(s=>s.reps)):0
-    return {date:new Date(w.completedAt!).toLocaleDateString(), maxW, meanW, vol, maxReps, sets:c.length}
+    const c=e.sets.filter(s=>s.completed)
+    const u=resolveUnit(e)
+    const load=c.map(s=> u==='time'? s.weight : u==='reps'? s.reps : s.weight)
+    const reps=c.map(s=>s.reps)
+    const maxL=c.length?Math.max(...load):0
+    const meanL=c.length?load.reduce((a,b)=>a+b,0)/c.length:0
+    const vol= u==='time'? c.reduce((a,s)=>a+s.weight,0) : u==='reps'? c.reduce((a,s)=>a+s.reps,0) : c.reduce((a,s)=>a+s.weight*s.reps,0)
+    const maxReps=reps.length?Math.max(...reps):0
+    return {date:new Date(w.completedAt!).toLocaleDateString(), maxW:maxL, meanW:meanL, vol, maxReps, sets:c.length}
   })
-  const [metric,setMetric]=useState<'maxW'|'meanW'|'vol'|'maxReps'>('maxW')
-  const opts:{k:typeof metric,l:string,unit:string,color:string}[]=[
+  const isReps=unit==='reps'
+  const isTime=unit==='time'
+  const [metric,setMetric]=useState<'maxW'|'meanW'|'vol'|'maxReps'>(isTime||isReps?'maxW':'maxW')
+  const opts:{k:typeof metric,l:string,unit:string,color:string}[]= isTime? [
+    {k:'maxW',l:'Máximo',unit:' s',color:'#fbbf24'},
+    {k:'meanW',l:'Promedio',unit:' s',color:'#60a5fa'},
+    {k:'vol',l:'Total',unit:' s',color:'#a78bfa'},
+  ] : isReps? [
+    {k:'maxW',l:'Máximo',unit:'',color:'#fbbf24'},
+    {k:'meanW',l:'Promedio',unit:'',color:'#60a5fa'},
+  ] : [
     {k:'maxW',l:'Max Peso',unit:' kg',color:'#fbbf24'},
     {k:'meanW',l:'Promedio',unit:' kg',color:'#60a5fa'},
     {k:'vol',l:'Volumen',unit:'',color:'#a78bfa'},
     {k:'maxReps',l:'Max Reps',unit:'',color:'#34d399'},
   ]
-  const o=opts.find(x=>x.k===metric)!
+  const o=opts.find(x=>x.k===metric) || opts[0]
   const pr=data.length?Math.max(...data.map(d=>d[metric])):0
   return (
     <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
