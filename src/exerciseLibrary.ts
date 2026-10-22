@@ -24,6 +24,7 @@ export type ExerciseContent = {
   name: string
   status: 'pending' | 'downloaded' | 'unavailable' | 'error'
   resourceKey?: string
+  media?: ExerciseMedia
   error?: string
   syncedAt: number
 }
@@ -160,6 +161,20 @@ async function fallbackMatch(name: string): Promise<{ source: ExerciseMedia['sou
   return { source: 'wger', url: wger[0].images[0].image, externalId: `wger:${wger[0].id}` }
 }
 
+async function saveRoutineMedia(routines: Routine[], exerciseId: string, media: ExerciseMedia) {
+  const routine = routines.find(item => item.blocks.some(block => block.exercises.some(exercise => exercise.id === exerciseId)))
+  if (!routine) return
+  const updated: Routine = {
+    ...routine,
+    blocks: routine.blocks.map(block => ({
+      ...block,
+      exercises: block.exercises.map(exercise => exercise.id === exerciseId ? { ...exercise, media } : exercise),
+    })),
+  }
+  Object.assign(routine, updated)
+  await db.saveRoutine(updated)
+}
+
 function routineExercises(routines: Routine[]): Exercise[] {
   return routines.flatMap(r => r.blocks.flatMap(b => b.exercises))
 }
@@ -184,6 +199,16 @@ export async function syncExerciseLibrary(routines: Routine[], onProgress?: (pro
     for (const exercise of exercises) {
       const existing = await db.getExerciseContent(exercise.id)
       if (existing?.name === exercise.name && (existing.status === 'downloaded' || existing.status === 'unavailable')) {
+        if (existing.status === 'downloaded' && existing.resourceKey && !exercise.media && existing.media) {
+          await saveRoutineMedia(routines, exercise.id, existing.media)
+        } else if (existing.status === 'downloaded' && existing.resourceKey && !exercise.media) {
+          const previousMatch = catalog.find(item => item.id === existing.resourceKey)
+          if (previousMatch) {
+            const storedMedia: ExerciseMedia = { source: 'exercise-gym-gifs', url: `${EXERCISE_DB_BASE}/${previousMatch.file}`, externalId: previousMatch.id, label: previousMatch.name, resourceKey: existing.resourceKey }
+            await db.saveExerciseContent({ ...existing, media: storedMedia })
+            await saveRoutineMedia(routines, exercise.id, storedMedia)
+          }
+        }
         completed++
         onProgress?.({ state: 'syncing', completed, total })
         continue
@@ -195,7 +220,9 @@ export async function syncExerciseLibrary(routines: Routine[], onProgress?: (pro
         if (fallback) {
           try {
             const media = await downloadMedia(fallback, `exercise:${exercise.id}`)
-            await db.saveExerciseContent({ localExerciseId: exercise.id, externalId: fallback.externalId, name: exercise.name, status: 'downloaded', resourceKey: media.resourceKey, syncedAt: Date.now() })
+            const storedMedia = { ...fallback, resourceKey: media.resourceKey }
+            await db.saveExerciseContent({ localExerciseId: exercise.id, externalId: fallback.externalId, name: exercise.name, status: 'downloaded', resourceKey: media.resourceKey, media: storedMedia, syncedAt: Date.now() })
+            await saveRoutineMedia(routines, exercise.id, storedMedia)
             completed++
             onProgress?.({ state: 'syncing', completed, total })
             continue
@@ -217,10 +244,12 @@ export async function syncExerciseLibrary(routines: Routine[], onProgress?: (pro
           resource = { key: resourceKey, blob, externalId: match.id }
           await db.saveExerciseResource(resource)
         }
+        const storedMedia: ExerciseMedia = { source: 'exercise-gym-gifs', url: `${EXERCISE_DB_BASE}/${match.file}`, externalId: match.id, label: match.name, resourceKey }
         await db.saveExerciseContent({
           localExerciseId: exercise.id, externalId: match.id, name: exercise.name,
-          status: 'downloaded', resourceKey, syncedAt: Date.now(),
+          status: 'downloaded', resourceKey, media: storedMedia, syncedAt: Date.now(),
         })
+        if (!exercise.media) await saveRoutineMedia(routines, exercise.id, storedMedia)
       } catch (error) {
         await db.saveExerciseContent({
           localExerciseId: exercise.id, externalId: match.id, name: exercise.name, status: 'error',

@@ -49,7 +49,7 @@ export default function App(){
   },[])
   useEffect(()=>{
     if(!routines.length) return
-    const sync=()=>{ if(navigator.onLine) void syncExerciseLibrary(routines,setLibraryProgress).then(async()=>setLibraryContent(await db.getAllExerciseContent())) }
+    const sync=()=>{ if(navigator.onLine) void syncExerciseLibrary(routines,setLibraryProgress).then(async()=>{ setRoutines(await db.getRoutines()); setLibraryContent(await db.getAllExerciseContent()) }) }
     sync()
     window.addEventListener('online',sync)
     return ()=>window.removeEventListener('online',sync)
@@ -97,7 +97,7 @@ export default function App(){
         {view.tab==='progress' && <ProgressView routines={routines} workouts={workouts} bws={bws} onAddBw={async(w)=>{
           const e:BodyweightEntry={id:uid(), date:new Date().toISOString().slice(0,10), weight:w}; await db.saveBodyweight(e); setBws(v=>[...v,e].sort((a,b)=>a.date.localeCompare(b.date)))
         }} onDelBw={async(id)=>{await db.delBodyweight(id); setBws(v=>v.filter(x=>x.id!==id))}} />}
-        {view.tab==='settings' && <Settings routines={routines} workouts={workouts} discarded={discarded} bws={bws} active={active} libraryContent={libraryContent} libraryProgress={libraryProgress} onSync={()=>void syncExerciseLibrary(routines,setLibraryProgress).then(async()=>setLibraryContent(await db.getAllExerciseContent()))} onImport={async(data)=>{
+        {view.tab==='settings' && <Settings routines={routines} workouts={workouts} discarded={discarded} bws={bws} active={active} libraryContent={libraryContent} libraryProgress={libraryProgress} onSync={()=>void syncExerciseLibrary(routines,setLibraryProgress).then(async()=>{ setRoutines(await db.getRoutines()); setLibraryContent(await db.getAllExerciseContent()) })} onImport={async(data)=>{
           await db.clearAll()
           for(const r of data.routines) await db.saveRoutine(r)
           for(const w of data.workouts) await db.saveWorkout(w)
