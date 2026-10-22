@@ -1,11 +1,12 @@
 import { useEffect, useState, useRef } from 'react'
-import type { Routine, Workout, BodyweightEntry, WorkoutExercise, Unit, DiscardedWorkout } from './types'
+import type { Routine, Workout, BodyweightEntry, WorkoutExercise, Unit, DiscardedWorkout, Exercise, ExerciseMedia } from './types'
 import * as db from './db'
 import { seedRoutines } from './data/seed'
 import { uid } from './utils/id'
 import { workoutVolume } from './utils/volume'
 import { suggestion, exerciseHistory, bestPreviousSets } from './utils/progression'
 import { UNIT_LABEL, UNIT_NAME, resolveUnit } from './utils/units'
+import { downloadMedia, EXERCISE_DB_BASE, searchExerciseGymGifs, searchWger, syncExerciseLibrary, type ExerciseContent, type SyncProgress } from './exerciseLibrary'
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } from 'recharts'
 import { FiActivity, FiArchive, FiArrowLeft, FiArrowRight, FiArrowUp, FiArrowDown, FiBarChart2, FiCheck, FiChevronDown, FiChevronUp, FiClock, FiEdit3, FiEye, FiHome, FiPlus, FiRefreshCw, FiSettings, FiTrash2, FiX, FiPlay, FiPause, FiSkipForward } from 'react-icons/fi'
 
@@ -14,7 +15,7 @@ type View = { tab: Tab, routineId?: string, workoutId?: string }
 
 function buildWorkout(r:Routine):Workout{
   const exs:WorkoutExercise[]=[]
-  r.blocks.slice().sort((a,b)=>a.order-b.order).forEach(b=>b.exercises.slice().sort((a,b)=>a.order-b.order).forEach(e=>exs.push({exerciseId:e.id, exerciseName:e.name, blockName:b.name, targetSets:e.sets, targetReps:e.targetReps, restSeconds:e.restSeconds, unit:resolveUnit(e), sets:Array.from({length:e.sets},()=>({weight:0,reps:0,completed:false}))})))
+  r.blocks.slice().sort((a,b)=>a.order-b.order).forEach(b=>b.exercises.slice().sort((a,b)=>a.order-b.order).forEach(e=>exs.push({exerciseId:e.id, exerciseName:e.name, blockName:b.name, targetSets:e.sets, targetReps:e.targetReps, restSeconds:e.restSeconds, unit:resolveUnit(e), media:e.media, sets:Array.from({length:e.sets},()=>({weight:0,reps:0,completed:false}))})))
   return {id:uid(), routineId:r.id, routineName:r.name, snapshot:r, startedAt:Date.now(), exercises:exs}
 }
 
@@ -26,12 +27,15 @@ export default function App(){
   const [bws,setBws]=useState<BodyweightEntry[]>([])
   const [active,setActive]=useState<Workout|null>(null)
   const [resumePrompt,setResumePrompt]=useState(false)
+  const [libraryProgress,setLibraryProgress]=useState<SyncProgress>({state:'idle',completed:0,total:0})
   const loaded=useRef(false)
 
   useEffect(()=>{
     (async()=>{
       const [r,w,b,aw,trash]=await Promise.all([db.getRoutines(),db.getWorkouts(),db.getBodyweights(),db.getKV('activeWorkout'),db.getDiscardedWorkouts()])
-      if(!r.length){ const seed=seedRoutines(); for(const s of seed) await db.saveRoutine(s); setRoutines(seed) } else setRoutines(r.sort((a,b)=>a.createdAt-b.createdAt))
+      const loadedRoutines=!r.length ? seedRoutines() : r.sort((a,b)=>a.createdAt-b.createdAt)
+      if(!r.length) for(const s of loadedRoutines) await db.saveRoutine(s)
+      setRoutines(loadedRoutines)
       setWorkouts(w.sort((a,b)=>(b.completedAt||b.startedAt)-(a.completedAt||a.startedAt)))
       const now=Date.now()
       for(const item of trash) if(item.expiresAt<=now) await db.delDiscardedWorkout(item.workout.id)
@@ -41,6 +45,13 @@ export default function App(){
       loaded.current=true
     })()
   },[])
+  useEffect(()=>{
+    if(!routines.length) return
+    const sync=()=>{ if(navigator.onLine) void syncExerciseLibrary(routines,setLibraryProgress) }
+    sync()
+    window.addEventListener('online',sync)
+    return ()=>window.removeEventListener('online',sync)
+  },[routines])
   useEffect(()=>{ if(loaded.current) db.setKV('activeWorkout', active) },[active])
 
   const saveRoutines=async(n:Routine[])=>{ setRoutines(n); for(const r of n) await db.saveRoutine(r) }
@@ -84,7 +95,7 @@ export default function App(){
         {view.tab==='progress' && <ProgressView routines={routines} workouts={workouts} bws={bws} onAddBw={async(w)=>{
           const e:BodyweightEntry={id:uid(), date:new Date().toISOString().slice(0,10), weight:w}; await db.saveBodyweight(e); setBws(v=>[...v,e].sort((a,b)=>a.date.localeCompare(b.date)))
         }} onDelBw={async(id)=>{await db.delBodyweight(id); setBws(v=>v.filter(x=>x.id!==id))}} />}
-        {view.tab==='settings' && <Settings routines={routines} workouts={workouts} discarded={discarded} bws={bws} active={active} onImport={async(data)=>{
+        {view.tab==='settings' && <Settings routines={routines} workouts={workouts} discarded={discarded} bws={bws} active={active} libraryProgress={libraryProgress} onSync={()=>void syncExerciseLibrary(routines,setLibraryProgress)} onImport={async(data)=>{
           await db.clearAll()
           for(const r of data.routines) await db.saveRoutine(r)
           for(const w of data.workouts) await db.saveWorkout(w)
@@ -196,21 +207,24 @@ function RoutineViewer({routine,onBack}:{routine:Routine,onBack:()=>void}){
 
 function RoutineEditor({routine,onSave,onBack}:{routine:Routine,onSave:(r:Routine)=>void,onBack:()=>void}){
   const [r,setR]=useState<Routine>(JSON.parse(JSON.stringify(routine)))
-  const addBlock=()=> setR(v=>({...v, blocks:[...v.blocks, {id:uid(), routineId:v.id, name:"New Block", order:v.blocks.length, exercises:[]}]}))
-  const updateBlock=(id:string, name:string)=> setR(v=>({...v, blocks: v.blocks.map(b=>b.id===id?{...b,name}:b)}))
-  const delBlock=(id:string)=> setR(v=>({...v, blocks: v.blocks.filter(b=>b.id!==id)}))
-  const moveBlock=(idx:number,dir:number)=> setR(v=>{ const a=[...v.blocks]; const n=idx+dir; if(n<0||n>=a.length) return v; [a[idx],a[n]]=[a[n],a[idx]]; return {...v, blocks:a.map((b,i)=>({...b,order:i}))}})
-  const addEx=(bid:string)=> setR(v=>({...v, blocks: v.blocks.map(b=>b.id===bid?{...b, exercises:[...b.exercises, {id:uid(), blockId:bid, name:"New Exercise", order:b.exercises.length, sets:3, targetReps:"8", restSeconds:90}]}:b)}))
-  const updEx=(bid:string, eid:string, patch:Partial<any>)=> setR(v=>({...v, blocks: v.blocks.map(b=>b.id===bid?{...b, exercises:b.exercises.map(e=>e.id===eid?{...e,...patch}:e)}:b)}))
-  const delEx=(bid:string,eid:string)=> setR(v=>({...v, blocks: v.blocks.map(b=>b.id===bid?{...b, exercises:b.exercises.filter(e=>e.id!==eid)}:b)}))
-  const moveEx=(bid:string,idx:number,dir:number)=> setR(v=>({...v, blocks: v.blocks.map(b=>{
+  const [saved,setSaved]=useState(false)
+  const flash=()=>{ setSaved(true); window.setTimeout(()=>setSaved(false),1200) }
+  const addBlock=()=> { setR(v=>({...v, blocks:[...v.blocks, {id:uid(), routineId:v.id, name:"New Block", order:v.blocks.length, exercises:[]}]})); flash() }
+  const updateBlock=(id:string, name:string)=> { setR(v=>({...v, blocks: v.blocks.map(b=>b.id===id?{...b,name}:b)})); flash() }
+  const delBlock=(id:string)=> { setR(v=>({...v, blocks: v.blocks.filter(b=>b.id!==id)})); flash() }
+  const moveBlock=(idx:number,dir:number)=> { setR(v=>{ const a=[...v.blocks]; const n=idx+dir; if(n<0||n>=a.length) return v; [a[idx],a[n]]=[a[n],a[idx]]; return {...v, blocks:a.map((b,i)=>({...b,order:i}))}}); flash() }
+  const addEx=(bid:string)=> { setR(v=>({...v, blocks: v.blocks.map(b=>b.id===bid?{...b, exercises:[...b.exercises, {id:uid(), blockId:bid, name:"New Exercise", order:b.exercises.length, sets:3, targetReps:"8", restSeconds:90}]}:b)})); flash() }
+  const updEx=(bid:string, eid:string, patch:Partial<Exercise>)=> { setR(v=>({...v, blocks: v.blocks.map(b=>b.id===bid?{...b, exercises:b.exercises.map(e=>e.id===eid?{...e,...patch}:e)}:b)})); flash() }
+  const delEx=(bid:string,eid:string)=> { setR(v=>({...v, blocks: v.blocks.map(b=>b.id===bid?{...b, exercises:b.exercises.filter(e=>e.id!==eid)}:b)})); flash() }
+  const moveEx=(bid:string,idx:number,dir:number)=> { setR(v=>({...v, blocks: v.blocks.map(b=>{
     if(b.id!==bid) return b
     const a=[...b.exercises]; const n=idx+dir; if(n<0||n>=a.length) return b; [a[idx],a[n]]=[a[n],a[idx]]; return {...b, exercises:a.map((e,i)=>({...e,order:i}))}
-  })}))
+  })})); flash() }
   return (
     <div className="pt-4 space-y-4">
+      {saved && <SaveConfirmation />}
       <button onClick={onBack} className="text-sm text-accent2 button-lift"><FiArrowLeft className="inline mr-1" />Back</button>
-      <input value={r.name} onChange={e=>setR({...r,name:e.target.value})} className="w-full bg-card border border-border rounded-xl px-4 py-3 font-semibold" placeholder="Routine name" />
+      <input value={r.name} onChange={e=>{setR({...r,name:e.target.value});flash()}} className="w-full bg-card border border-border rounded-xl px-4 py-3 font-semibold" placeholder="Routine name" />
       {r.blocks.map((b,bi)=>(
         <div key={b.id} className="bg-card border border-border rounded-2xl p-3 space-y-3">
           <div className="flex gap-2">
@@ -241,15 +255,79 @@ function RoutineEditor({routine,onSave,onBack}:{routine:Routine,onSave:(r:Routin
                 </select>
               </label>
               <input value={e.notes||''} onChange={ev=>updEx(b.id,e.id,{notes:ev.target.value})} placeholder="Notes" className="w-full bg-card border border-border rounded-lg px-2 py-1.5 text-xs" />
+              <ExerciseMediaPicker exercise={e} onChange={media=>updEx(b.id,e.id,{media})} onSaved={flash} />
             </div>
           ))}
           <button onClick={()=>addEx(b.id)} className="w-full py-2 rounded-xl bg-card2 border border-dashed border-border text-sm button-lift"><FiPlus className="inline mr-1" />Add Exercise</button>
         </div>
       ))}
       <button onClick={addBlock} className="w-full py-3 rounded-xl border border-dashed border-border text-sm button-lift"><FiPlus className="inline mr-1" />Add Block</button>
-      <button onClick={()=>onSave(r)} className="w-full py-3 rounded-xl bg-accent text-black font-semibold button-lift"><FiCheck className="inline mr-1" />Save Routine</button>
+      <button onClick={()=>{onSave(r); flash()}} className="w-full py-3 rounded-xl bg-accent text-black font-semibold button-lift"><FiCheck className="inline mr-1" />Save Routine</button>
     </div>
   )
+}
+
+function SaveConfirmation(){
+  return <div className="fixed inset-0 z-[70] pointer-events-none flex items-center justify-center">
+    <div className="animate-modal-in rounded-full bg-emerald-500 text-white p-5 shadow-2xl shadow-emerald-500/40"><FiCheck className="text-4xl"/></div>
+  </div>
+}
+
+type MediaCandidate = { source: ExerciseMedia['source']; url: string; externalId?: string; label: string }
+
+function ExerciseMediaPicker({exercise,onChange,onSaved}:{exercise:Exercise,onChange:(media:ExerciseMedia|undefined)=>void,onSaved:()=>void}){
+  const [open,setOpen]=useState(false)
+  const [loading,setLoading]=useState(false)
+  const [error,setError]=useState('')
+  const [candidates,setCandidates]=useState<MediaCandidate[]>([])
+  const [index,setIndex]=useState(0)
+  const [url,setUrl]=useState('')
+  const choose=async(candidate:MediaCandidate)=>{
+    setLoading(true); setError('')
+    try {
+      const media=await downloadMedia(candidate,`exercise:${exercise.id}`)
+      await db.saveExerciseContent({localExerciseId:exercise.id,externalId:media.externalId,name:exercise.name,status:'downloaded',resourceKey:media.resourceKey,syncedAt:Date.now()})
+      onChange({source:candidate.source,url:candidate.url,externalId:candidate.externalId,label:candidate.label,resourceKey:media.resourceKey})
+      setOpen(false); onSaved()
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo guardar el recurso local') }
+    finally { setLoading(false) }
+  }
+  const search=async()=>{
+    setLoading(true); setError(''); setIndex(0)
+    try {
+      let results=await searchExerciseGymGifs(exercise.name)
+      if(results.length) {
+        const found=results.map(item=>({source:'exercise-gym-gifs' as const,url:`${EXERCISE_DB_BASE}/${item.file}`,externalId:item.id,label:item.name}))
+        setCandidates(found)
+      } else {
+        const wger=await searchWger(exercise.name)
+        const found=wger.flatMap(item=>(item.images||[]).map(image=>({source:'wger' as const,url:image.image,externalId:`wger:${item.id}`,label:item.name||exercise.name})))
+        setCandidates(found)
+        if(!found.length) setError('No se encontraron demostraciones. Puedes guardar una URL manual.')
+      }
+    } catch (e) { setCandidates([]); setError(e instanceof Error ? e.message : 'No se pudo buscar') }
+    finally { setLoading(false) }
+  }
+  const saveUrl=()=>{ const value=url.trim(); if(!/^https?:\/\/.+/i.test(value)){setError('Introduce una URL http(s) válida');return}; void choose({source:'url',url:value,label:'URL personalizada'}) }
+  return <div className="pt-2 border-t border-border/50">
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-xs text-muted">{exercise.media ? `Recurso: ${exercise.media.label||exercise.media.source}` : 'Sin demostración personalizada'}</span>
+      <button onClick={()=>{setOpen(true);setCandidates([]);setError('');void search()}} className="text-xs px-3 py-2 rounded-lg bg-card2 border border-border button-lift">{exercise.media?'Cambiar GIF / imagen':'Agregar GIF / imagen'}</button>
+    </div>
+    {open && <div className="fixed inset-0 z-[60] bg-black/75 backdrop-blur flex items-center justify-center p-4">
+      <div className="bg-card border border-border rounded-2xl p-4 w-full max-w-sm space-y-3 animate-modal-in">
+        <div className="flex justify-between items-center"><h3 className="font-semibold">Demostración de {exercise.name}</h3><button onClick={()=>setOpen(false)}><FiX/></button></div>
+        {loading && <div className="text-sm text-muted">Buscando y guardando opciones…</div>}
+        {!loading && candidates.length>0 && <div className="space-y-2">
+          <div className="relative bg-bg rounded-xl overflow-hidden"><img src={candidates[index].url} alt={candidates[index].label} className="w-full h-48 object-contain"/><div className="absolute bottom-2 left-2 right-2 text-xs bg-black/70 rounded p-2">{candidates[index].label} · {candidates[index].source}</div></div>
+          <div className="flex items-center justify-between"><button disabled={index===0} onClick={()=>setIndex(value=>value-1)} className="px-3 py-2 rounded-lg bg-card2 disabled:opacity-30"><FiArrowLeft/></button><span className="text-xs text-muted">{index+1}/{candidates.length}</span><button disabled={index===candidates.length-1} onClick={()=>setIndex(value=>value+1)} className="px-3 py-2 rounded-lg bg-card2 disabled:opacity-30"><FiArrowRight/></button></div>
+          <button disabled={loading} onClick={()=>void choose(candidates[index])} className="w-full py-3 rounded-xl bg-accent text-black font-semibold">Guardar esta opción offline</button>
+        </div>}
+        {!loading && <div className="space-y-2"><div className="text-xs tracking-widest text-dim">URL MANUAL</div><div className="flex gap-2"><input value={url} onChange={event=>setUrl(event.target.value)} placeholder="https://..." className="min-w-0 flex-1 bg-bg border border-border rounded-lg px-3 py-2 text-sm"/><button onClick={saveUrl} className="px-3 rounded-lg bg-card2 border border-border">Guardar</button></div></div>}
+        {error && <div className="text-xs text-amber-300">{error}</div>}
+      </div>
+    </div>}
+  </div>
 }
 
 function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{workout:Workout,workouts:Workout[],onChange:(w:Workout)=>void,onFinish:()=>void,onDiscard:()=>void,onSave:(w:Workout)=>void}){
@@ -317,6 +395,7 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
           <div className="text-xs text-muted mt-1">{ex.targetSets} × {ex.targetReps} · rest {ex.restSeconds}s</div>
           <div className="text-xs text-emerald-400 mt-1">{doneCount}/{ex.targetSets} sets done</div>
           <button onClick={skipExercise} className="mt-3 w-full py-2.5 rounded-xl bg-card2 border border-border text-xs text-muted button-lift"><FiSkipForward className="inline mr-2"/>Skip exercise for this workout</button>
+          <ExerciseEducation exerciseId={ex.exerciseId} media={ex.media} />
         </div>
 
         <div className="bg-card border border-border rounded-2xl p-4 space-y-2">
@@ -571,7 +650,36 @@ function ExerciseChart({name,unit,workouts}:{name:string,unit:Unit,workouts:Work
   )
 }
 
-function Settings({routines,workouts,discarded,bws,active,onImport,onClear}:{routines:Routine[],workouts:Workout[],discarded:DiscardedWorkout[],bws:BodyweightEntry[],active:Workout|null,onImport:(d:any)=>void,onClear:()=>void}){
+function ExerciseEducation({exerciseId,media}:{exerciseId:string,media?:ExerciseMedia}){
+  const [content,setContent]=useState<ExerciseContent|null>(null)
+  const [url,setUrl]=useState<string|null>(null)
+  useEffect(()=>{
+    let disposed=false
+    let objectUrl:string|undefined
+    const load=async()=>{
+      const item=await db.getExerciseContent(exerciseId)
+      if(disposed) return
+      setContent(item||null)
+      setUrl(null)
+      const resourceKey=media?.resourceKey || (item?.status==='downloaded' ? item.resourceKey : undefined)
+      if(resourceKey){
+        const resource=await db.getExerciseResource(resourceKey)
+        if(resource && !disposed){ objectUrl=URL.createObjectURL(resource.blob); setUrl(objectUrl) }
+      }
+      if(!disposed && (!item || item.status==='error')) window.setTimeout(load,1500)
+    }
+    void load()
+    return ()=>{ disposed=true; if(objectUrl) URL.revokeObjectURL(objectUrl) }
+  },[exerciseId,media?.resourceKey])
+  if(media?.resourceKey && url) return <div className="mt-3 border-t border-border/60 pt-3 space-y-3"><img src={url} alt={`Demostración de ${media.label||'ejercicio'}`} className="w-full max-h-64 object-contain rounded-xl bg-bg" /></div>
+  if(!content || content.status==='pending') return <div className="mt-3 text-xs text-muted">Contenido visual pendiente de sincronización.</div>
+  if(content.status!=='downloaded' || !url) return <div className="mt-3 text-xs text-muted">{content.status==='error' ? 'No se pudo descargar la demostración; se reintentará cuando haya conexión.' : 'Demostración no disponible para este ejercicio.'}</div>
+  return <div className="mt-3 border-t border-border/60 pt-3 space-y-3">
+    <img src={url} alt={`Demostración de ${content.name}`} className="w-full max-h-64 object-contain rounded-xl bg-bg" />
+  </div>
+}
+
+function Settings({routines,workouts,discarded,bws,active,libraryProgress,onSync,onImport,onClear}:{routines:Routine[],workouts:Workout[],discarded:DiscardedWorkout[],bws:BodyweightEntry[],active:Workout|null,libraryProgress:SyncProgress,onSync:()=>void,onImport:(d:any)=>void,onClear:()=>void}){
   const exp=()=>{
     const data={routines,workouts,discardedWorkouts:discarded,bodyweights:bws,activeWorkout:active, exportedAt:Date.now()}
     const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`gym-backup-${new Date().toISOString().slice(0,10)}.json`; a.click()
@@ -582,6 +690,16 @@ function Settings({routines,workouts,discarded,bws,active,onImport,onClear}:{rou
   return (
     <div className="pt-4 space-y-4">
       <h2 className="text-xl font-bold"><FiSettings className="inline mr-2 text-accent2"/>Settings</h2>
+      <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+        <div className="text-sm font-semibold">Exercise demonstrations</div>
+        <div className="text-xs text-muted">
+          {libraryProgress.state==='syncing' ? `Synchronizing ${libraryProgress.completed}/${libraryProgress.total} exercises…` :
+            libraryProgress.state==='ready' ? `${libraryProgress.completed}/${libraryProgress.total} exercises checked and stored locally.` :
+            libraryProgress.state==='error' ? `Synchronization failed: ${libraryProgress.message}` : 'Not synchronized yet.'}
+        </div>
+        <button onClick={onSync} disabled={libraryProgress.state==='syncing'} className="w-full py-3 rounded-xl bg-card2 border border-border disabled:opacity-50 button-lift"><FiRefreshCw className="inline mr-2"/>Retry synchronization</button>
+        <div className="text-[11px] text-muted">GIFs are stored in IndexedDB and are not requested during workouts. Source: Exercise Gym GIFs DB; GIF rights belong to their respective authors.</div>
+      </div>
       <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
         <div className="text-sm font-semibold">Data</div>
         <button onClick={exp} className="w-full py-3 rounded-xl bg-card2 border border-border button-lift"><FiArchive className="inline mr-2"/>Export Data (JSON)</button>

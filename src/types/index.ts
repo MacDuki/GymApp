@@ -1,9 +1,10 @@
 export type Unit = 'weight' | 'reps' | 'time'
 export type Routine = { id: string; name: string; createdAt: number; blocks: Block[] }
 export type Block = { id: string; routineId: string; name: string; order: number; exercises: Exercise[] }
-export type Exercise = { id: string; blockId: string; name: string; order: number; sets: number; targetReps: string; restSeconds: number; notes?: string; unit?: Unit }
+export type ExerciseMedia = { source: 'exercise-gym-gifs'|'wger'|'url'; url: string; resourceKey?: string; externalId?: string; label?: string }
+export type Exercise = { id: string; blockId: string; name: string; order: number; sets: number; targetReps: string; restSeconds: number; notes?: string; unit?: Unit; media?: ExerciseMedia }
 export type WorkoutSet = { weight: number; reps: number; completed: boolean }
-export type WorkoutExercise = { exerciseId: string; exerciseName: string; blockName: string; targetSets: number; targetReps: string; restSeconds: number; sets: WorkoutSet[]; unit?: Unit; skipped?: boolean }
+export type WorkoutExercise = { exerciseId: string; exerciseName: string; blockName: string; targetSets: number; targetReps: string; restSeconds: number; sets: WorkoutSet[]; unit?: Unit; media?: ExerciseMedia; skipped?: boolean }
 export type Workout = { id: string; routineId: string; routineName: string; snapshot: Routine; startedAt: number; completedAt?: number; exercises: WorkoutExercise[] }
 export type DiscardedWorkout = { workout: Workout; discardedAt: number; expiresAt: number }
 export type BodyweightEntry = { id: string; date: string; weight: number }

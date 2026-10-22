@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:exercise-library": "node scripts/exercise-library.test.mjs"
   },
   "dependencies": {
     "idb": "^8.0.0",
