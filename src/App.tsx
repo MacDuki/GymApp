@@ -28,11 +28,12 @@ export default function App(){
   const [active,setActive]=useState<Workout|null>(null)
   const [resumePrompt,setResumePrompt]=useState(false)
   const [libraryProgress,setLibraryProgress]=useState<SyncProgress>({state:'idle',completed:0,total:0})
+  const [libraryContent,setLibraryContent]=useState<ExerciseContent[]>([])
   const loaded=useRef(false)
 
   useEffect(()=>{
     (async()=>{
-      const [r,w,b,aw,trash]=await Promise.all([db.getRoutines(),db.getWorkouts(),db.getBodyweights(),db.getKV('activeWorkout'),db.getDiscardedWorkouts()])
+      const [r,w,b,aw,trash,content]=await Promise.all([db.getRoutines(),db.getWorkouts(),db.getBodyweights(),db.getKV('activeWorkout'),db.getDiscardedWorkouts(),db.getAllExerciseContent()])
       const loadedRoutines=!r.length ? seedRoutines() : r.sort((a,b)=>a.createdAt-b.createdAt)
       if(!r.length) for(const s of loadedRoutines) await db.saveRoutine(s)
       setRoutines(loadedRoutines)
@@ -41,13 +42,14 @@ export default function App(){
       for(const item of trash) if(item.expiresAt<=now) await db.delDiscardedWorkout(item.workout.id)
       setDiscarded(trash.filter(item=>item.expiresAt>now).sort((a,b)=>b.discardedAt-a.discardedAt))
       setBws(b.sort((a,b)=>a.date.localeCompare(b.date)))
+      setLibraryContent(content)
       if(aw){ setActive(aw); setResumePrompt(true) }
       loaded.current=true
     })()
   },[])
   useEffect(()=>{
     if(!routines.length) return
-    const sync=()=>{ if(navigator.onLine) void syncExerciseLibrary(routines,setLibraryProgress) }
+    const sync=()=>{ if(navigator.onLine) void syncExerciseLibrary(routines,setLibraryProgress).then(async()=>setLibraryContent(await db.getAllExerciseContent())) }
     sync()
     window.addEventListener('online',sync)
     return ()=>window.removeEventListener('online',sync)
@@ -95,7 +97,7 @@ export default function App(){
         {view.tab==='progress' && <ProgressView routines={routines} workouts={workouts} bws={bws} onAddBw={async(w)=>{
           const e:BodyweightEntry={id:uid(), date:new Date().toISOString().slice(0,10), weight:w}; await db.saveBodyweight(e); setBws(v=>[...v,e].sort((a,b)=>a.date.localeCompare(b.date)))
         }} onDelBw={async(id)=>{await db.delBodyweight(id); setBws(v=>v.filter(x=>x.id!==id))}} />}
-        {view.tab==='settings' && <Settings routines={routines} workouts={workouts} discarded={discarded} bws={bws} active={active} libraryProgress={libraryProgress} onSync={()=>void syncExerciseLibrary(routines,setLibraryProgress)} onImport={async(data)=>{
+        {view.tab==='settings' && <Settings routines={routines} workouts={workouts} discarded={discarded} bws={bws} active={active} libraryContent={libraryContent} libraryProgress={libraryProgress} onSync={()=>void syncExerciseLibrary(routines,setLibraryProgress).then(async()=>setLibraryContent(await db.getAllExerciseContent()))} onImport={async(data)=>{
           await db.clearAll()
           for(const r of data.routines) await db.saveRoutine(r)
           for(const w of data.workouts) await db.saveWorkout(w)
@@ -198,8 +200,9 @@ function RoutineViewer({routine,onBack}:{routine:Routine,onBack:()=>void}){
     <div><h2 className="text-xl font-bold">{routine.name}</h2><div className="text-xs text-muted mt-1">Read-only routine overview</div></div>
     {routine.blocks.slice().sort((a,b)=>a.order-b.order).map(block=><div key={block.id} className="bg-card border border-border rounded-2xl p-4">
       <div className="font-semibold">{block.name}</div>
-      <div className="mt-3 space-y-2">{block.exercises.slice().sort((a,b)=>a.order-b.order).map(e=><div key={e.id} className="flex justify-between gap-3 text-sm border-b border-border/50 pb-2 last:border-0 last:pb-0">
-        <span>{e.name}</span><span className="text-muted whitespace-nowrap">{e.sets} × {e.targetReps}</span>
+      <div className="mt-3 space-y-2">{block.exercises.slice().sort((a,b)=>a.order-b.order).map(e=><div key={e.id} className="border-b border-border/50 pb-2 last:border-0 last:pb-0">
+        <div className="flex justify-between gap-3 text-sm"><span>{e.name}</span><span className="text-muted whitespace-nowrap">{e.sets} × {e.targetReps}</span></div>
+        <ExerciseMediaImage exerciseId={e.id} media={e.media} className="mt-2 h-28" />
       </div>)}</div>
     </div>)}
   </div>
@@ -255,6 +258,7 @@ function RoutineEditor({routine,onSave,onBack}:{routine:Routine,onSave:(r:Routin
                 </select>
               </label>
               <input value={e.notes||''} onChange={ev=>updEx(b.id,e.id,{notes:ev.target.value})} placeholder="Notes" className="w-full bg-card border border-border rounded-lg px-2 py-1.5 text-xs" />
+              <ExerciseMediaImage exerciseId={e.id} media={e.media} className="h-24" />
               <ExerciseMediaPicker exercise={e} onChange={media=>updEx(b.id,e.id,{media})} onSaved={flash} />
             </div>
           ))}
@@ -472,6 +476,7 @@ function HistoryView({workouts,discarded,onSelect,selected,onDelete,onRestore,on
       </div>
       {sel.exercises.map((e,i)=>(
         <div key={i} className="bg-card border border-border rounded-xl p-3">
+          <ExerciseMediaImage exerciseId={e.exerciseId} media={e.media} className="mb-2 h-28" />
           <div className="text-xs text-dim">{e.blockName}</div><div className="font-medium text-sm">{e.exerciseName}</div>
           <div className="mt-2 space-y-1">{e.sets.map((s,j)=>{ const u=resolveUnit(e); return <div key={j} className="text-sm flex justify-between"><span>{u==='time'? `${s.weight||0}s` : u==='reps'? `${s.reps||0} reps` : `${s.weight} × ${s.reps}`}</span><span className={s.completed?'text-emerald-400':'text-dim'}>{s.completed?'✓':''}</span></div>})}</div>
         </div>
@@ -497,6 +502,7 @@ function HistoryView({workouts,discarded,onSelect,selected,onDelete,onRestore,on
           </button>
           {expandedDiscarded===item.workout.id && <div className="mt-3 pt-3 border-t border-border/60 space-y-2">
             {item.workout.exercises.map((e,i)=><div key={i} className="bg-bg border border-border rounded-lg p-2.5">
+              <ExerciseMediaImage exerciseId={e.exerciseId} media={e.media} className="mb-2 h-20" />
               <div className="text-xs text-dim">{e.blockName}</div><div className="font-medium text-sm">{e.exerciseName}</div>
               <div className="mt-1 space-y-0.5">{e.sets.map((s,j)=>{ const u=resolveUnit(e); return <div key={j} className="text-xs flex justify-between"><span>{u==='time'?`${s.weight||0}s`:u==='reps'?`${s.reps||0} reps`:`${s.weight||0} kg × ${s.reps||0}`}</span><span className={s.completed?'text-emerald-400':'text-dim'}>{s.completed?'✓':'—'}</span></div>})}</div>
             </div>)}
@@ -544,7 +550,7 @@ function ProgressView({routines,workouts,bws,onAddBw,onDelBw}:{routines:Routine[
       {routine && <>
         {mainBlock && <>
           <div className="text-xs tracking-widest text-dim">{mainBlock.name.toUpperCase()} · {mainExercises.length} ejercicios</div>
-          {mainExercises.map(ex=> <ExerciseChart key={ex.id} name={ex.name} unit={resolveUnit(ex)} workouts={done} />)}
+          {mainExercises.map(ex=> <ExerciseChart key={ex.id} name={ex.name} exerciseId={ex.id} media={ex.media} unit={resolveUnit(ex)} workouts={done} />)}
         </>}
         {!mainBlock && <div className="text-sm text-muted bg-card border border-border rounded-2xl p-4">Esta rutina no tiene un bloque «Rutina principal».</div>}
       </>}
@@ -587,7 +593,7 @@ function formatMetric(value:number){
   return Number.isInteger(value) ? value.toLocaleString() : value.toLocaleString(undefined,{maximumFractionDigits:2})
 }
 
-function ExerciseChart({name,unit,workouts}:{name:string,unit:Unit,workouts:Workout[]}){
+function ExerciseChart({name,exerciseId,media,unit,workouts}:{name:string,exerciseId:string,media?:ExerciseMedia,unit:Unit,workouts:Workout[]}){
   const history=workouts
     .filter(w=>w.exercises.some(e=>e.exerciseName===name))
     .sort((a,b)=>a.completedAt!-b.completedAt!)
@@ -623,6 +629,7 @@ function ExerciseChart({name,unit,workouts}:{name:string,unit:Unit,workouts:Work
   const pr=data.length?Math.max(...data.map(d=>d[metric])):0
   return (
     <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+      <ExerciseMediaImage exerciseId={exerciseId} media={media} className="h-32" />
       <div className="flex items-start justify-between gap-2">
         <div className="font-semibold text-sm leading-tight">{name}</div>
         <div className="text-xs text-accent2 whitespace-nowrap">{data.length>0?`PR ${formatMetric(pr)}${o.unit}`:'—'}</div>
@@ -650,7 +657,7 @@ function ExerciseChart({name,unit,workouts}:{name:string,unit:Unit,workouts:Work
   )
 }
 
-function ExerciseEducation({exerciseId,media}:{exerciseId:string,media?:ExerciseMedia}){
+function ExerciseMediaImage({exerciseId,media,className}:{exerciseId:string,media?:ExerciseMedia,className?:string}){
   const [content,setContent]=useState<ExerciseContent|null>(null)
   const [url,setUrl]=useState<string|null>(null)
   useEffect(()=>{
@@ -671,15 +678,17 @@ function ExerciseEducation({exerciseId,media}:{exerciseId:string,media?:Exercise
     void load()
     return ()=>{ disposed=true; if(objectUrl) URL.revokeObjectURL(objectUrl) }
   },[exerciseId,media?.resourceKey])
-  if(media?.resourceKey && url) return <div className="mt-3 border-t border-border/60 pt-3 space-y-3"><img src={url} alt={`Demostración de ${media.label||'ejercicio'}`} className="w-full max-h-64 object-contain rounded-xl bg-bg" /></div>
-  if(!content || content.status==='pending') return <div className="mt-3 text-xs text-muted">Contenido visual pendiente de sincronización.</div>
-  if(content.status!=='downloaded' || !url) return <div className="mt-3 text-xs text-muted">{content.status==='error' ? 'No se pudo descargar la demostración; se reintentará cuando haya conexión.' : 'Demostración no disponible para este ejercicio.'}</div>
-  return <div className="mt-3 border-t border-border/60 pt-3 space-y-3">
-    <img src={url} alt={`Demostración de ${content.name}`} className="w-full max-h-64 object-contain rounded-xl bg-bg" />
-  </div>
+  if(!url) return null
+  return <img src={url} alt={`Demostración de ${media?.label||content?.name||'ejercicio'}`} className={`w-full object-contain rounded-xl bg-bg ${className||'max-h-64'}`} />
 }
 
-function Settings({routines,workouts,discarded,bws,active,libraryProgress,onSync,onImport,onClear}:{routines:Routine[],workouts:Workout[],discarded:DiscardedWorkout[],bws:BodyweightEntry[],active:Workout|null,libraryProgress:SyncProgress,onSync:()=>void,onImport:(d:any)=>void,onClear:()=>void}){
+function ExerciseEducation({exerciseId,media}:{exerciseId:string,media?:ExerciseMedia}){
+  return <div className="mt-3 border-t border-border/60 pt-3"><ExerciseMediaImage exerciseId={exerciseId} media={media} className="max-h-64" /></div>
+}
+
+function Settings({routines,workouts,discarded,bws,active,libraryContent,libraryProgress,onSync,onImport,onClear}:{routines:Routine[],workouts:Workout[],discarded:DiscardedWorkout[],bws:BodyweightEntry[],active:Workout|null,libraryContent:ExerciseContent[],libraryProgress:SyncProgress,onSync:()=>void,onImport:(d:any)=>void,onClear:()=>void}){
+  const exercises=routines.flatMap(r=>r.blocks.flatMap(b=>b.exercises))
+  const visualCount=exercises.filter(ex=>ex.media?.resourceKey || libraryContent.some(content=>content.localExerciseId===ex.id && content.status==='downloaded' && content.resourceKey)).length
   const exp=()=>{
     const data={routines,workouts,discardedWorkouts:discarded,bodyweights:bws,activeWorkout:active, exportedAt:Date.now()}
     const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`gym-backup-${new Date().toISOString().slice(0,10)}.json`; a.click()
@@ -692,6 +701,7 @@ function Settings({routines,workouts,discarded,bws,active,libraryProgress,onSync
       <h2 className="text-xl font-bold"><FiSettings className="inline mr-2 text-accent2"/>Settings</h2>
       <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
         <div className="text-sm font-semibold">Exercise demonstrations</div>
+        <div className="text-xs text-muted">{exercises.length}/{visualCount} ejercicios con imagen</div>
         <div className="text-xs text-muted">
           {libraryProgress.state==='syncing' ? `Synchronizing ${libraryProgress.completed}/${libraryProgress.total} exercises…` :
             libraryProgress.state==='ready' ? `${libraryProgress.completed}/${libraryProgress.total} exercises checked and stored locally.` :
