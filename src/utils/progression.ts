@@ -22,3 +22,20 @@ export function previousSets(exName:string, workouts:Workout[]){
   if(!h.length) return null
   return h[0].exercises.find(e=>e.exerciseName===exName)!.sets
 }
+
+export function exerciseHistory(exName:string, workouts:Workout[]) {
+  return workouts
+    .filter(w=>w.completedAt && w.exercises.some(e=>e.exerciseName===exName))
+    .sort((a,b)=>(b.completedAt||0)-(a.completedAt||0))
+    .map(w=>({ workout:w, sets:w.exercises.find(e=>e.exerciseName===exName)!.sets }))
+}
+
+export function bestPreviousSets(exName:string, workouts:Workout[]) {
+  const history=exerciseHistory(exName,workouts)
+  if(!history.length) return null
+  return history.slice().sort((a,b)=>{
+    const aMax=Math.max(...a.sets.filter(s=>s.completed).map(s=>s.weight),0)
+    const bMax=Math.max(...b.sets.filter(s=>s.completed).map(s=>s.weight),0)
+    return bMax-aMax
+  })[0].sets
+}

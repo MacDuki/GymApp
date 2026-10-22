@@ -5,5 +5,6 @@ export type Exercise = { id: string; blockId: string; name: string; order: numbe
 export type WorkoutSet = { weight: number; reps: number; completed: boolean }
 export type WorkoutExercise = { exerciseId: string; exerciseName: string; blockName: string; targetSets: number; targetReps: string; restSeconds: number; sets: WorkoutSet[]; unit?: Unit }
 export type Workout = { id: string; routineId: string; routineName: string; snapshot: Routine; startedAt: number; completedAt?: number; exercises: WorkoutExercise[] }
+export type DiscardedWorkout = { workout: Workout; discardedAt: number; expiresAt: number }
 export type BodyweightEntry = { id: string; date: string; weight: number }
-export type ExportData = { routines: Routine[]; workouts: Workout[]; bodyweights: BodyweightEntry[]; activeWorkout: Workout|null; exportedAt: number }
+export type ExportData = { routines: Routine[]; workouts: Workout[]; bodyweights: BodyweightEntry[]; discardedWorkouts?: DiscardedWorkout[]; activeWorkout: Workout|null; exportedAt: number }

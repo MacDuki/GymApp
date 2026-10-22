@@ -9,7 +9,7 @@ Everything runs locally on your device: routines, workouts, history, progress tr
 ## ✨ Features
 
 ### 🗂️ Routine Management
-- Create, rename, duplicate and delete routines.
+- Create, rename, view, edit and delete routines.
 - Each routine is made of flexible **blocks/sections**, each containing its own exercises.
 - Add, rename, delete and reorder blocks.
 - Add, edit, delete and reorder exercises inside each block.
@@ -23,7 +23,7 @@ Everything runs locally on your device: routines, workouts, history, progress tr
 - **Autosaves** every change to IndexedDB instantly.
 - View **previous performance** for each exercise.
 - Receive a **simple progressive-overload suggestion** based on your last workout.
-- **REST TIMER** — a configurable countdown timer (`START REST`, `+15s`, `-15s`, `SKIP`) that never blocks set recording.
+- **MANUAL TIMER** — a circular timer that starts only when requested; timed exercises count down from their target and support `+10s`, while other exercises count upward freely.
 - Blocks stay visually grouped so you always know where you are in the routine.
 - Progress is preserved when navigating between exercises.
 
@@ -35,6 +35,7 @@ Everything runs locally on your device: routines, workouts, history, progress tr
 - Chronological list of completed workouts with **date** and **total volume** (`weight × reps` summed).
 - Drill into any workout to see every exercise and set, including completion status.
 - Historical workouts are **snapshotted** — editing a routine later never rewrites old history.
+- Discarded workouts are kept in a recycle bin for 7 days and can be restored or permanently deleted.
 
 ### 📈 Progress Tracking
 - Per-exercise weight progression chart.
@@ -43,7 +44,7 @@ Everything runs locally on your device: routines, workouts, history, progress tr
 - Optional **bodyweight** tracker with its own progression chart — independent of workouts.
 
 ### 📦 Data Backup
-- **Export** all data (routines, workouts, bodyweight) to a JSON file.
+- **Export** all data (routines, workouts, recycle bin and bodyweight) to a JSON file.
 - **Import** a JSON backup to restore everything.
 - **Delete all data** (with confirmation) when you want to start fresh.
 - Local-first by design — **no cloud sync**, no accounts, no external services.

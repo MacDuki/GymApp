@@ -1,12 +1,13 @@
 import { useEffect, useState, useRef } from 'react'
-import type { Routine, Workout, BodyweightEntry, WorkoutExercise, Unit } from './types'
+import type { Routine, Workout, BodyweightEntry, WorkoutExercise, Unit, DiscardedWorkout } from './types'
 import * as db from './db'
 import { seedRoutines } from './data/seed'
 import { uid } from './utils/id'
 import { workoutVolume } from './utils/volume'
-import { suggestion, previousSets } from './utils/progression'
+import { suggestion, exerciseHistory, bestPreviousSets } from './utils/progression'
 import { UNIT_LABEL, UNIT_NAME, resolveUnit } from './utils/units'
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } from 'recharts'
+import { FiActivity, FiArchive, FiArrowLeft, FiArrowRight, FiArrowUp, FiArrowDown, FiBarChart2, FiCheck, FiChevronDown, FiChevronUp, FiClock, FiEdit3, FiEye, FiHome, FiPlus, FiRefreshCw, FiSettings, FiTrash2, FiX, FiPlay, FiPause } from 'react-icons/fi'
 
 type Tab = 'home'|'routines'|'history'|'progress'|'settings'
 type View = { tab: Tab, routineId?: string, workoutId?: string }
@@ -21,6 +22,7 @@ export default function App(){
   const [view,setView]=useState<View>({tab:'home'})
   const [routines,setRoutines]=useState<Routine[]>([])
   const [workouts,setWorkouts]=useState<Workout[]>([])
+  const [discarded,setDiscarded]=useState<DiscardedWorkout[]>([])
   const [bws,setBws]=useState<BodyweightEntry[]>([])
   const [active,setActive]=useState<Workout|null>(null)
   const [resumePrompt,setResumePrompt]=useState(false)
@@ -28,9 +30,12 @@ export default function App(){
 
   useEffect(()=>{
     (async()=>{
-      const [r,w,b,aw]=await Promise.all([db.getRoutines(),db.getWorkouts(),db.getBodyweights(),db.getKV('activeWorkout')])
+      const [r,w,b,aw,trash]=await Promise.all([db.getRoutines(),db.getWorkouts(),db.getBodyweights(),db.getKV('activeWorkout'),db.getDiscardedWorkouts()])
       if(!r.length){ const seed=seedRoutines(); for(const s of seed) await db.saveRoutine(s); setRoutines(seed) } else setRoutines(r.sort((a,b)=>a.createdAt-b.createdAt))
       setWorkouts(w.sort((a,b)=>(b.completedAt||b.startedAt)-(a.completedAt||a.startedAt)))
+      const now=Date.now()
+      for(const item of trash) if(item.expiresAt<=now) await db.delDiscardedWorkout(item.workout.id)
+      setDiscarded(trash.filter(item=>item.expiresAt>now).sort((a,b)=>b.discardedAt-a.discardedAt))
       setBws(b.sort((a,b)=>a.date.localeCompare(b.date)))
       if(aw){ setActive(aw); setResumePrompt(true) }
       loaded.current=true
@@ -40,23 +45,27 @@ export default function App(){
 
   const saveRoutines=async(n:Routine[])=>{ setRoutines(n); for(const r of n) await db.saveRoutine(r) }
   const refreshWorkouts=async()=>{ const w=await db.getWorkouts(); setWorkouts(w.sort((a,b)=>(b.completedAt||b.startedAt)-(a.completedAt||a.startedAt))) }
+  const discardWorkout=async(w:Workout)=>{
+    const item:DiscardedWorkout={workout:w,discardedAt:Date.now(),expiresAt:Date.now()+7*24*60*60*1000}
+    await db.saveDiscardedWorkout(item); setDiscarded(v=>[item,...v.filter(x=>x.workout.id!==w.id)])
+  }
 
   if(active && !resumePrompt){
     return <ActiveWorkout workout={active} workouts={workouts} onChange={setActive} onFinish={async()=>{
       const done={...active, completedAt:Date.now()}
       await db.saveWorkout(done); await db.setKV('activeWorkout',null); setActive(null); refreshWorkouts(); setView({tab:'history'})
-    }} onDiscard={async()=>{ await db.setKV('activeWorkout',null); setActive(null)}} onSave={async(u)=>{ setActive(u); await db.setKV('activeWorkout',u)}} />
+    }} onDiscard={async()=>{ await discardWorkout(active); await db.setKV('activeWorkout',null); setActive(null)}} onSave={async(u)=>{ setActive(u); await db.setKV('activeWorkout',u)}} />
   }
 
   return (
     <div className="min-h-screen pb-[84px] max-w-[480px] mx-auto" style={{paddingBottom:'calc(84px + env(safe-area-inset-bottom))'}}>
       {resumePrompt && active && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur flex items-center justify-center p-6">
-          <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-sm">
+          <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-sm animate-modal-in">
             <h3 className="font-semibold text-lg">Active workout found</h3>
             <p className="text-sm text-muted mt-1">Unfinished {active.routineName} workout</p>
             <div className="flex gap-3 mt-5">
-              <button onClick={async()=>{ await db.setKV('activeWorkout',null); setActive(null); setResumePrompt(false)}} className="flex-1 py-3 rounded-xl bg-card2 border border-border">Discard</button>
+              <button onClick={async()=>{ await discardWorkout(active); await db.setKV('activeWorkout',null); setActive(null); setResumePrompt(false)}} className="flex-1 py-3 rounded-xl bg-card2 border border-border">Discard</button>
               <button onClick={()=>setResumePrompt(false)} className="flex-1 py-3 rounded-xl bg-accent text-black font-semibold">Resume</button>
             </div>
           </div>
@@ -71,14 +80,15 @@ export default function App(){
           const w=buildWorkout(r)
           setActive(w); setResumePrompt(false)
         }} detailId={view.routineId} setView={setView} />}
-        {view.tab==='history' && <HistoryView workouts={workouts} onSelect={id=>setView({tab:'history', workoutId:id})} selected={view.workoutId} onDelete={async(id)=>{await db.delWorkout(id); refreshWorkouts(); setView({tab:'history'})}} />}
+        {view.tab==='history' && <HistoryView workouts={workouts} discarded={discarded} onSelect={id=>setView({tab:'history', workoutId:id})} selected={view.workoutId} onDelete={async(id)=>{await db.delWorkout(id); refreshWorkouts(); setView({tab:'history'})}} onRestore={async(id)=>{const item=discarded.find(x=>x.workout.id===id); if(item){await db.saveWorkout(item.workout);await db.delDiscardedWorkout(id);setDiscarded(v=>v.filter(x=>x.workout.id!==id));refreshWorkouts()}}} onPermanentDelete={async(id)=>{await db.delDiscardedWorkout(id);setDiscarded(v=>v.filter(x=>x.workout.id!==id))}} />}
         {view.tab==='progress' && <ProgressView routines={routines} workouts={workouts} bws={bws} onAddBw={async(w)=>{
           const e:BodyweightEntry={id:uid(), date:new Date().toISOString().slice(0,10), weight:w}; await db.saveBodyweight(e); setBws(v=>[...v,e].sort((a,b)=>a.date.localeCompare(b.date)))
         }} onDelBw={async(id)=>{await db.delBodyweight(id); setBws(v=>v.filter(x=>x.id!==id))}} />}
-        {view.tab==='settings' && <Settings routines={routines} workouts={workouts} bws={bws} active={active} onImport={async(data)=>{
+        {view.tab==='settings' && <Settings routines={routines} workouts={workouts} discarded={discarded} bws={bws} active={active} onImport={async(data)=>{
           await db.clearAll()
           for(const r of data.routines) await db.saveRoutine(r)
           for(const w of data.workouts) await db.saveWorkout(w)
+          for(const item of data.discardedWorkouts||[]) await db.saveDiscardedWorkout(item)
           for(const b of data.bodyweights) await db.saveBodyweight(b)
           if(data.activeWorkout) await db.setKV('activeWorkout',data.activeWorkout)
           location.reload()
@@ -90,12 +100,12 @@ export default function App(){
 }
 
 function Nav({tab,onChange}:{tab:Tab,onChange:(t:Tab)=>void}){
-  const items:{k:Tab,l:string,ico:string}[]=[{k:'home',l:'Home',ico:'◍'},{k:'routines',l:'Routines',ico:'≡'},{k:'history',l:'History',ico:'◷'},{k:'progress',l:'Progress',ico:'⟁'},{k:'settings',l:'Settings',ico:'⚙'}]
+  const items:{k:Tab,l:string,ico:React.ReactNode}[]=[{k:'home',l:'Home',ico:<FiHome/>},{k:'routines',l:'Routines',ico:<FiActivity/>},{k:'history',l:'History',ico:<FiClock/>},{k:'progress',l:'Progress',ico:<FiBarChart2/>},{k:'settings',l:'Settings',ico:<FiSettings/>}]
   return (
     <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[480px] bg-card/95 backdrop-blur border-t border-border flex" style={{paddingBottom:'env(safe-area-inset-bottom)'}}>
       {items.map(i=>(
-        <button key={i.k} onClick={()=>onChange(i.k)} className={`flex-1 py-3 flex flex-col items-center gap-0.5 ${tab===i.k?'text-accent2':'text-dim'}`}>
-          <span className="text-[18px] leading-none">{i.ico}</span><span className="text-[10px] tracking-wide">{i.l}</span>
+        <button key={i.k} onClick={()=>onChange(i.k)} className={`flex-1 py-3 flex flex-col items-center gap-0.5 transition-colors ${tab===i.k?'text-accent2':'text-dim'}`}>
+          <span className={`text-[18px] leading-none transition-transform ${tab===i.k?'scale-110':''}`}>{i.ico}</span><span className="text-[10px] tracking-wide">{i.l}</span>
         </button>
       ))}
     </div>
@@ -104,15 +114,23 @@ function Nav({tab,onChange}:{tab:Tab,onChange:(t:Tab)=>void}){
 
 function Home({routines,workouts,onStart,onNav}:{routines:Routine[],workouts:Workout[],onStart:(r:Routine)=>void,onNav:(v:View)=>void}){
   const recent=workouts.slice(0,3)
+  const dayNames=['DOMINGO','LUNES','MARTES','MIÉRCOLES','JUEVES','VIERNES','SÁBADO']
+  const today=dayNames[new Date().getDay()]
+  const recommended=routines.find(r=>r.name.toUpperCase().startsWith(today))
   return (
     <div className="space-y-5 pt-4">
       <h1 className="text-2xl font-bold tracking-tight">MY GYM</h1>
+      {recommended && <div className="bg-accent/15 border-2 border-accent rounded-2xl p-4 shadow-[0_0_24px_rgba(250,204,21,.18)]">
+        <div className="text-[11px] tracking-widest text-accent2 font-bold">RECOMMENDED TODAY · {today}</div>
+        <div className="text-xl font-bold mt-1">{recommended.name}</div>
+        <button onClick={()=>onStart(recommended)} className="mt-3 w-full py-3 rounded-xl bg-accent text-black font-bold button-lift"><FiPlay className="inline mr-2" />START TODAY'S WORKOUT</button>
+      </div>}
       <div className="space-y-3">
         {routines.map(r=>(
-          <div key={r.id} className="bg-card border border-border rounded-2xl p-4">
+          <div key={r.id} className="bg-card border border-border rounded-2xl p-4 card-enter">
             <div className="font-semibold">{r.name}</div>
             <div className="text-xs text-muted mt-1">{r.blocks.length} blocks · {r.blocks.reduce((a,b)=>a+b.exercises.length,0)} exercises</div>
-            <button onClick={()=>onStart(r)} className="mt-3 w-full py-3 rounded-xl bg-accent text-black font-semibold">START WORKOUT</button>
+            <button onClick={()=>onStart(r)} className="mt-3 w-full py-3 rounded-xl bg-accent text-black font-semibold button-lift"><FiPlay className="inline mr-2" />START WORKOUT</button>
           </div>
         ))}
         {routines.length===0 && <div className="text-sm text-muted text-center py-8">No routines yet — go to Routines to create one</div>}
@@ -126,43 +144,54 @@ function Home({routines,workouts,onStart,onNav}:{routines:Routine[],workouts:Wor
           </div>
         )): <div className="text-xs text-muted">No workouts yet</div>}
       </div>
-      <button onClick={()=>onNav({tab:'routines'})} className="w-full py-3 rounded-xl bg-card2 border border-border text-sm">Manage Routines</button>
+      <button onClick={()=>onNav({tab:'routines'})} className="w-full py-3 rounded-xl bg-card2 border border-border text-sm button-lift"><FiEdit3 className="inline mr-2" />Manage Routines</button>
     </div>
   )
 }
 
 function RoutinesView({routines,onChange,onDelete,onStart,detailId,setView}:{routines:Routine[],onChange:(n:Routine[])=>void,onDelete:(id:string)=>void,onStart:(r:Routine)=>void,detailId?:string,setView:(v:View)=>void}){
   const [editing,setEditing]=useState<Routine|null>(routines.find(r=>r.id===detailId)||null)
+  const [viewing,setViewing]=useState<Routine|null>(null)
   useEffect(()=>{ if(detailId) setEditing(routines.find(r=>r.id===detailId)||null)},[detailId])
   if(editing) return <RoutineEditor routine={editing} onSave={r=>{ const n=routines.map(x=>x.id===r.id?r:x); onChange(n); setEditing(null); setView({tab:'routines'})}} onBack={()=>{setEditing(null); setView({tab:'routines'})}} />
+  if(viewing) return <RoutineViewer routine={viewing} onBack={()=>setViewing(null)} />
   return (
     <div className="pt-4 space-y-4">
       <div className="flex justify-between items-center"><h2 className="text-xl font-bold">Routines</h2>
         <button onClick={()=>{
           const r:Routine={id:uid(), name:"New Routine", createdAt:Date.now(), blocks:[]}
           onChange([...routines,r]); setEditing(r)
-        }} className="px-4 py-2 rounded-xl bg-accent text-black text-sm font-semibold">+ Create</button>
+        }} className="px-4 py-2 rounded-xl bg-accent text-black text-sm font-semibold button-lift"><FiPlus className="inline mr-1" /> Create</button>
       </div>
       {routines.map(r=>(
         <div key={r.id} className="bg-card border border-border rounded-2xl p-4">
           <div className="flex justify-between">
             <div className="font-semibold">{r.name}</div>
-            <button onClick={()=>{ if(confirm('Delete routine?')) onDelete(r.id)}} className="text-xs text-red-400">Delete</button>
+            <button aria-label={`Delete ${r.name}`} title="Delete routine" onClick={()=>{ if(confirm('Delete routine?')) onDelete(r.id)}} className="p-2 rounded-lg text-red-400 hover:bg-red-500/10 button-lift"><FiTrash2 size={19} strokeWidth={2.5}/></button>
           </div>
           <div className="text-xs text-muted mt-1">{r.blocks.map(b=>b.name).join(' · ')||'No blocks'}</div>
           <div className="flex gap-2 mt-3">
-            <button onClick={()=>setEditing(r)} className="flex-1 py-2.5 rounded-xl bg-card2 border border-border text-sm">Edit</button>
-            <button onClick={()=>{
-              const dup:Routine={...r, id:uid(), name:r.name+" Copy", blocks:r.blocks.map(b=>({...b, id:uid(), routineId:uid(), exercises:b.exercises.map(e=>({...e, id:uid(), blockId:uid()}))}))}
-              const nid=uid(); dup.id=nid; dup.blocks.forEach(b=>{b.routineId=nid; const bid=uid(); const old=b.id; b.id=bid; b.exercises.forEach(e=>{e.blockId=bid; e.id=uid()})})
-              onChange([...routines,dup])
-            }} className="px-4 py-2.5 rounded-xl bg-card2 border border-border text-sm">Dup</button>
-            <button onClick={()=>onStart(r)} className="flex-1 py-2.5 rounded-xl bg-accent text-black font-semibold text-sm">Start</button>
+            <button aria-label={`View ${r.name}`} title="View routine" onClick={()=>setViewing(r)} className="flex-1 py-3 rounded-xl bg-card2 border border-border flex items-center justify-center button-lift"><FiEye size={22} strokeWidth={2.5}/></button>
+            <button aria-label={`Edit ${r.name}`} title="Edit routine" onClick={()=>setEditing(r)} className="flex-1 py-3 rounded-xl bg-card2 border border-border flex items-center justify-center button-lift"><FiEdit3 size={22} strokeWidth={2.5}/></button>
+            <button aria-label={`Start ${r.name}`} title="Start workout" onClick={()=>onStart(r)} className="flex-1 py-3 rounded-xl bg-accent text-black flex items-center justify-center button-lift"><FiPlay size={23} strokeWidth={2.8}/></button>
           </div>
         </div>
       ))}
     </div>
   )
+}
+
+function RoutineViewer({routine,onBack}:{routine:Routine,onBack:()=>void}){
+  return <div className="pt-4 space-y-4">
+    <button onClick={onBack} className="text-sm text-accent2 button-lift"><FiArrowLeft className="inline mr-1" />Routines</button>
+    <div><h2 className="text-xl font-bold">{routine.name}</h2><div className="text-xs text-muted mt-1">Read-only routine overview</div></div>
+    {routine.blocks.slice().sort((a,b)=>a.order-b.order).map(block=><div key={block.id} className="bg-card border border-border rounded-2xl p-4">
+      <div className="font-semibold">{block.name}</div>
+      <div className="mt-3 space-y-2">{block.exercises.slice().sort((a,b)=>a.order-b.order).map(e=><div key={e.id} className="flex justify-between gap-3 text-sm border-b border-border/50 pb-2 last:border-0 last:pb-0">
+        <span>{e.name}</span><span className="text-muted whitespace-nowrap">{e.sets} × {e.targetReps}</span>
+      </div>)}</div>
+    </div>)}
+  </div>
 }
 
 function RoutineEditor({routine,onSave,onBack}:{routine:Routine,onSave:(r:Routine)=>void,onBack:()=>void}){
@@ -180,23 +209,23 @@ function RoutineEditor({routine,onSave,onBack}:{routine:Routine,onSave:(r:Routin
   })}))
   return (
     <div className="pt-4 space-y-4">
-      <button onClick={onBack} className="text-sm text-accent2">← Back</button>
+      <button onClick={onBack} className="text-sm text-accent2 button-lift"><FiArrowLeft className="inline mr-1" />Back</button>
       <input value={r.name} onChange={e=>setR({...r,name:e.target.value})} className="w-full bg-card border border-border rounded-xl px-4 py-3 font-semibold" placeholder="Routine name" />
       {r.blocks.map((b,bi)=>(
         <div key={b.id} className="bg-card border border-border rounded-2xl p-3 space-y-3">
           <div className="flex gap-2">
             <input value={b.name} onChange={e=>updateBlock(b.id,e.target.value)} className="flex-1 bg-card2 border border-border rounded-xl px-3 py-2 text-sm font-medium" />
-            <button onClick={()=>moveBlock(bi,-1)} className="px-2 bg-card2 border border-border rounded-lg">↑</button>
-            <button onClick={()=>moveBlock(bi,1)} className="px-2 bg-card2 border border-border rounded-lg">↓</button>
-            <button onClick={()=>delBlock(b.id)} className="px-2 text-red-400">✕</button>
+            <button aria-label="Move block up" onClick={()=>moveBlock(bi,-1)} className="px-2 bg-card2 border border-border rounded-lg button-lift"><FiArrowUp/></button>
+            <button aria-label="Move block down" onClick={()=>moveBlock(bi,1)} className="px-2 bg-card2 border border-border rounded-lg button-lift"><FiArrowDown/></button>
+            <button aria-label="Delete block" onClick={()=>delBlock(b.id)} className="px-2 text-red-400 button-lift"><FiX/></button>
           </div>
           {b.exercises.map((e,ei)=>(
             <div key={e.id} className="bg-bg border border-border rounded-xl p-3 space-y-2">
               <div className="flex gap-2">
                 <input value={e.name} onChange={ev=>updEx(b.id,e.id,{name:ev.target.value})} className="flex-1 bg-card border border-border rounded-lg px-2 py-2 text-sm" />
-                <button onClick={()=>moveEx(b.id,ei,-1)} className="px-1.5 text-xs border border-border rounded">↑</button>
-                <button onClick={()=>moveEx(b.id,ei,1)} className="px-1.5 text-xs border border-border rounded">↓</button>
-                <button onClick={()=>delEx(b.id,e.id)} className="text-red-400 px-1">✕</button>
+                <button aria-label="Move exercise up" onClick={()=>moveEx(b.id,ei,-1)} className="px-1.5 text-xs border border-border rounded button-lift"><FiArrowUp/></button>
+                <button aria-label="Move exercise down" onClick={()=>moveEx(b.id,ei,1)} className="px-1.5 text-xs border border-border rounded button-lift"><FiArrowDown/></button>
+                <button aria-label="Delete exercise" onClick={()=>delEx(b.id,e.id)} className="text-red-400 px-1 button-lift"><FiX/></button>
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <label className="text-xs text-muted">Sets <input type="number" value={e.sets} onChange={ev=>updEx(b.id,e.id,{sets:parseInt(ev.target.value)||1})} className="w-full mt-1 bg-card border border-border rounded-lg px-2 py-2" /></label>
@@ -214,11 +243,11 @@ function RoutineEditor({routine,onSave,onBack}:{routine:Routine,onSave:(r:Routin
               <input value={e.notes||''} onChange={ev=>updEx(b.id,e.id,{notes:ev.target.value})} placeholder="Notes" className="w-full bg-card border border-border rounded-lg px-2 py-1.5 text-xs" />
             </div>
           ))}
-          <button onClick={()=>addEx(b.id)} className="w-full py-2 rounded-xl bg-card2 border border-dashed border-border text-sm">+ Add Exercise</button>
+          <button onClick={()=>addEx(b.id)} className="w-full py-2 rounded-xl bg-card2 border border-dashed border-border text-sm button-lift"><FiPlus className="inline mr-1" />Add Exercise</button>
         </div>
       ))}
-      <button onClick={addBlock} className="w-full py-3 rounded-xl border border-dashed border-border text-sm">+ Add Block</button>
-      <button onClick={()=>onSave(r)} className="w-full py-3 rounded-xl bg-accent text-black font-semibold">Save Routine</button>
+      <button onClick={addBlock} className="w-full py-3 rounded-xl border border-dashed border-border text-sm button-lift"><FiPlus className="inline mr-1" />Add Block</button>
+      <button onClick={()=>onSave(r)} className="w-full py-3 rounded-xl bg-accent text-black font-semibold button-lift"><FiCheck className="inline mr-1" />Save Routine</button>
     </div>
   )
 }
@@ -227,14 +256,18 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
   const [idx,setIdx]=useState(0)
   const [timer,setTimer]=useState(0)
   const [run,setRun]=useState(false)
+  const [previousOpen,setPreviousOpen]=useState(false)
+  const [previousIndex,setPreviousIndex]=useState(0)
   const ex=workout.exercises[idx]
   const unit=resolveUnit(ex)
-  const prev=previousSets(ex.exerciseName, workouts)
+  const history=exerciseHistory(ex.exerciseName, workouts)
+  const prev=previousOpen ? history[previousIndex]?.sets : bestPreviousSets(ex.exerciseName, workouts)
   const sug=suggestion(ex.exerciseName, ex.targetSets, ex.targetReps, workouts)
   const curSetIdx=ex.sets.findIndex(s=>!s.completed)
   const doneCount=ex.sets.filter(s=>s.completed).length
-  useEffect(()=>{ if(!run) return; const id=setInterval(()=>setTimer(t=>t>0? t-1:0),1000); return ()=>clearInterval(id)},[run])
-  useEffect(()=>{ if(timer===0) setRun(false)},[timer])
+  useEffect(()=>{ if(!run) return; const id=setInterval(()=>setTimer(t=>unit==='time'?Math.max(0,t-1):t+1),1000); return ()=>clearInterval(id)},[run,unit])
+  useEffect(()=>{ if(unit==='time' && timer===0) setRun(false)},[timer,unit])
+  useEffect(()=>{ if(unit==='time') setTimer(parseInt(ex.targetReps)||0); else setTimer(0); setRun(false); setPreviousIndex(0); setPreviousOpen(false) },[idx,unit,ex.targetReps])
   const updSet=(si:number, patch:Partial<any>)=>{
     const n={...workout, exercises: workout.exercises.map((e,i)=> i!==idx?e:{...e, sets:e.sets.map((s,j)=> j===si?{...s,...patch}:s)})}
     onChange(n); onSave(n)
@@ -249,7 +282,7 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
     <div className="min-h-screen bg-bg pb-6">
       <div className="sticky top-0 bg-card border-b border-border px-4 py-3 flex justify-between items-center" style={{paddingTop:'calc(12px + env(safe-area-inset-top))'}}>
         <div><div className="font-bold text-sm">{workout.routineName}</div><div className="text-xs text-muted">{pct}% · {ex.blockName} · {idx+1}/{workout.exercises.length}</div></div>
-        <button onClick={()=>{ if(confirm('Discard workout?')) onDiscard()}} className="text-xs px-3 py-1.5 rounded-lg bg-card2 border border-border">Exit</button>
+        <button onClick={()=>{ if(confirm('Discard workout?')) onDiscard()}} className="text-xs px-3 py-1.5 rounded-lg bg-card2 border border-border button-lift"><FiX className="inline mr-1" />Exit</button>
       </div>
       <div className="px-4 pt-4 space-y-4">
         <div className="h-1 bg-card2 rounded-full overflow-hidden"><div className="h-full bg-accent" style={{width: `${Math.min(1,(idx+1)/workout.exercises.length)*100}%`}} /></div>
@@ -261,8 +294,9 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
         </div>
 
         <div className="bg-card border border-border rounded-2xl p-4 space-y-2">
-          <div className="text-xs font-semibold tracking-widest text-dim">PREVIOUS</div>
+          <button onClick={()=>setPreviousOpen(v=>!v)} className="w-full text-left text-xs font-semibold tracking-widest text-dim">PREVIOUS {previousOpen?<FiChevronUp className="inline"/>:<FiChevronDown className="inline"/>} <span className="float-right text-accent2 normal-case tracking-normal">{previousOpen?'All records':'Best performance'}</span></button>
           {prev? prev.map((s,i)=><div key={i} className="text-sm">{fmtSet(s)} {s.completed?'✓':''}</div>): <div className="text-sm text-muted">No previous workout</div>}
+          {previousOpen && history.length>1 && <div className="flex items-center justify-between pt-2"><button aria-label="Previous record" onClick={()=>setPreviousIndex(i=>Math.max(0,i-1))} disabled={previousIndex===0} className="px-3 py-1 rounded-lg bg-card2 border border-border disabled:opacity-30 button-lift"><FiArrowLeft/></button><span className="text-xs text-muted">{previousIndex+1}/{history.length} · {new Date(history[previousIndex].workout.completedAt!).toLocaleDateString()}</span><button aria-label="Next record" onClick={()=>setPreviousIndex(i=>Math.min(history.length-1,i+1))} disabled={previousIndex===history.length-1} className="px-3 py-1 rounded-lg bg-card2 border border-border disabled:opacity-30 button-lift"><FiArrowRight/></button></div>}
           {unit==='weight' && sug && <div className="mt-2 bg-accent/10 border border-accent/20 rounded-xl p-3"><div className="text-xs text-accent2">Suggested: {sug.text}</div><div className="text-[11px] text-muted">{sug.reason}</div></div>}
         </div>
 
@@ -280,28 +314,30 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
                   <label className="text-xs text-muted">Reps<input type="number" inputMode="numeric" value={s.reps||''} onChange={e=>updSet(si,{reps:parseInt(e.target.value)||0})} className="w-full mt-1 bg-bg border border-border rounded-xl px-3 py-3 text-lg font-semibold" placeholder="0" /></label>
                 </div>
               )}
-              <button onClick={()=>{ updSet(si,{completed:!s.completed}); if(!s.completed && ex.restSeconds>0){ setTimer(ex.restSeconds); setRun(true)}}} className={`w-full mt-3 py-3.5 rounded-xl font-semibold text-lg ${s.completed?'bg-card2 text-white border border-border':'bg-accent text-black'}`}>{s.completed?'↩ Undo':'✓ COMPLETE SET'}</button>
+              <button onClick={()=>updSet(si,{completed:!s.completed})} className={`w-full mt-3 py-3.5 rounded-xl font-semibold text-lg button-lift ${s.completed?'bg-card2 text-white border border-border':'bg-accent text-black'}`}>{s.completed?<><FiRefreshCw className="inline mr-2"/>Undo</>:<><FiCheck className="inline mr-2"/>COMPLETE SET</>}</button>
             </div>
           ))}
           <button onClick={addSet} className="w-full py-3 rounded-xl bg-card2 border border-dashed border-border text-sm">+ Add extra set (currently {ex.sets.length}/{ex.targetSets})</button>
         </div>
 
         <div className="bg-card border border-border rounded-2xl p-4 flex flex-col items-center gap-3">
-          <div className="text-3xl font-mono font-bold">{String(Math.floor(timer/60)).padStart(2,'0')}:{String(timer%60).padStart(2,'0')}</div>
+          <div className="relative w-36 h-36">
+            <svg className="w-full h-full -rotate-90" viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" fill="none" stroke="#ffffff18" strokeWidth="8"/><circle cx="60" cy="60" r="52" fill="none" stroke="#facc15" strokeWidth="8" strokeLinecap="round" strokeDasharray={`${2*Math.PI*52}`} strokeDashoffset={`${2*Math.PI*52*(unit==='time' ? 1-Math.min(1,timer/Math.max(parseInt(ex.targetReps)||1,1)) : 1-(timer%60)/60)}`}/></svg>
+            <div className="absolute inset-0 flex items-center justify-center text-2xl font-mono font-bold">{String(Math.floor(timer/60)).padStart(2,'0')}:{String(timer%60).padStart(2,'0')}</div>
+          </div>
           <div className="flex gap-2 w-full">
-            <button onClick={()=>{setTimer(ex.restSeconds); setRun(true)}} className="flex-1 py-3 rounded-xl bg-accent text-black font-semibold">START REST</button>
-            <button onClick={()=>setRun(!run)} className="px-6 py-3 rounded-xl bg-card2 border border-border">{run?'Pause':'Resume'}</button>
+            <button onClick={()=>setRun(true)} className="flex-1 py-3 rounded-xl bg-accent text-black font-semibold button-lift">{run?<><FiActivity className="inline mr-2"/>RUNNING</>:<><FiPlay className="inline mr-2"/>START TIMER</>}</button>
+            <button onClick={()=>setRun(false)} className="px-6 py-3 rounded-xl bg-card2 border border-border button-lift"><FiPause className="inline mr-1"/>Pause</button>
           </div>
           <div className="flex gap-2">
-            <button onClick={()=>setTimer(t=>t+15)} className="px-3 py-1.5 rounded-lg bg-card2 border border-border text-xs">+15s</button>
-            <button onClick={()=>setTimer(t=>Math.max(0,t-15))} className="px-3 py-1.5 rounded-lg bg-card2 border border-border text-xs">-15s</button>
-            <button onClick={()=>{setTimer(0);setRun(false)}} className="px-3 py-1.5 rounded-lg bg-card2 border border-border text-xs">SKIP</button>
+            {unit==='time' &&             <button onClick={()=>setTimer(t=>t+10)} className="px-3 py-1.5 rounded-lg bg-card2 border border-border text-xs button-lift"><FiPlus className="inline mr-1"/>10s</button>}
+            <button onClick={()=>{setTimer(unit==='time'?parseInt(ex.targetReps)||0:0);setRun(false)}} className="px-3 py-1.5 rounded-lg bg-card2 border border-border text-xs button-lift"><FiRefreshCw className="inline mr-1"/>RESET</button>
           </div>
         </div>
 
         <div className="flex gap-3">
-          <button disabled={idx===0} onClick={()=>setIdx(i=>i-1)} className="flex-1 py-4 rounded-xl bg-card border border-border disabled:opacity-30 font-semibold">PREVIOUS</button>
-          <button disabled={idx===workout.exercises.length-1} onClick={()=>setIdx(i=>i+1)} className="flex-1 py-4 rounded-xl bg-card border border-border disabled:opacity-30 font-semibold">NEXT</button>
+          <button disabled={idx===0} onClick={()=>setIdx(i=>i-1)} className="flex-1 py-4 rounded-xl bg-card border border-border disabled:opacity-30 font-semibold button-lift"><FiArrowLeft className="inline mr-2"/>PREVIOUS</button>
+          <button disabled={idx===workout.exercises.length-1} onClick={()=>setIdx(i=>i+1)} className="flex-1 py-4 rounded-xl bg-card border border-border disabled:opacity-30 font-semibold button-lift">NEXT<FiArrowRight className="inline ml-2"/></button>
         </div>
 
         <div className="space-y-1">
@@ -319,11 +355,12 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
   )
 }
 
-function HistoryView({workouts,onSelect,selected,onDelete}:{workouts:Workout[],onSelect:(id:string)=>void,selected?:string,onDelete:(id:string)=>void}){
+function HistoryView({workouts,discarded,onSelect,selected,onDelete,onRestore,onPermanentDelete}:{workouts:Workout[],discarded:DiscardedWorkout[],onSelect:(id:string)=>void,selected?:string,onDelete:(id:string)=>void,onRestore:(id:string)=>void,onPermanentDelete:(id:string)=>void}){
+  const [expandedDiscarded,setExpandedDiscarded]=useState<string|null>(null)
   const sel=workouts.find(w=>w.id===selected)
   if(sel) return (
     <div className="pt-4 space-y-4">
-      <button onClick={()=>onSelect('')} className="text-sm text-accent2">← History</button>
+      <button onClick={()=>onSelect('')} className="text-sm text-accent2 button-lift"><FiArrowLeft className="inline mr-1"/>History</button>
       <div className="bg-card border border-border rounded-2xl p-4">
         <div className="font-bold">{sel.routineName}</div>
         <div className="text-xs text-muted">{new Date(sel.completedAt||sel.startedAt).toLocaleString()} · {workoutVolume(sel.exercises).toLocaleString()} kg volume</div>
@@ -341,11 +378,27 @@ function HistoryView({workouts,onSelect,selected,onDelete}:{workouts:Workout[],o
     <div className="pt-4 space-y-3">
       <h2 className="text-xl font-bold">History</h2>
       {workouts.filter(w=>w.completedAt).length? workouts.filter(w=>w.completedAt).map(w=>(
-        <button key={w.id} onClick={()=>onSelect(w.id)} className="w-full text-left bg-card border border-border rounded-2xl p-4">
+        <button key={w.id} onClick={()=>onSelect(w.id)} className="w-full text-left bg-card border border-border rounded-2xl p-4 card-enter button-lift">
           <div className="font-semibold text-sm">{w.routineName}</div>
           <div className="text-xs text-muted">{new Date(w.completedAt!).toLocaleDateString()} · Volume: {workoutVolume(w.exercises).toLocaleString()} kg</div>
         </button>
       )): <div className="text-sm text-muted text-center py-8">No history yet</div>}
+      <div className="pt-4 space-y-2">
+        <div className="text-xs tracking-widest text-dim">RECYCLE BIN · 7 DAYS</div>
+        {discarded.length ? discarded.map(item=><div key={item.workout.id} className="bg-card border border-red-400/20 rounded-xl p-3">
+          <button onClick={()=>setExpandedDiscarded(id=>id===item.workout.id?null:item.workout.id)} className="w-full text-left">
+            <div className="flex justify-between items-start gap-3"><div className="font-medium text-sm"><FiArchive className="inline mr-1 text-red-300"/>{item.workout.routineName}</div><span className="text-xs text-accent2">{expandedDiscarded===item.workout.id?<><FiChevronUp className="inline mr-1"/>Hide</>:<><FiChevronDown className="inline mr-1"/>View</>}</span></div>
+            <div className="text-xs text-muted mt-1">Expires {new Date(item.expiresAt).toLocaleDateString()} · {item.workout.exercises.length} exercises · {workoutVolume(item.workout.exercises).toLocaleString()} kg volume</div>
+          </button>
+          {expandedDiscarded===item.workout.id && <div className="mt-3 pt-3 border-t border-border/60 space-y-2">
+            {item.workout.exercises.map((e,i)=><div key={i} className="bg-bg border border-border rounded-lg p-2.5">
+              <div className="text-xs text-dim">{e.blockName}</div><div className="font-medium text-sm">{e.exerciseName}</div>
+              <div className="mt-1 space-y-0.5">{e.sets.map((s,j)=>{ const u=resolveUnit(e); return <div key={j} className="text-xs flex justify-between"><span>{u==='time'?`${s.weight||0}s`:u==='reps'?`${s.reps||0} reps`:`${s.weight||0} kg × ${s.reps||0}`}</span><span className={s.completed?'text-emerald-400':'text-dim'}>{s.completed?'✓':'—'}</span></div>})}</div>
+            </div>)}
+          </div>}
+          <div className="flex gap-2 mt-2"><button onClick={()=>onRestore(item.workout.id)} className="flex-1 py-2 rounded-lg bg-accent text-black text-xs font-semibold button-lift"><FiRefreshCw className="inline mr-1"/>Restore</button><button onClick={()=>{if(confirm('Delete permanently?')) onPermanentDelete(item.workout.id)}} className="flex-1 py-2 rounded-lg bg-card2 border border-border text-xs text-red-400 button-lift"><FiTrash2 className="inline mr-1"/>Delete forever</button></div>
+        </div>) : <div className="text-xs text-muted">No discarded workouts.</div>}
+      </div>
     </div>
   )
 }
@@ -394,11 +447,11 @@ function ProgressView({routines,workouts,bws,onAddBw,onDelBw}:{routines:Routine[
       <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
         <div className="flex justify-between items-center">
           <div className="font-semibold text-sm">Peso corporal</div>
-          <button onClick={()=>setBwShow(v=>!v)} className="text-xs px-2.5 py-1 rounded-lg bg-card2 border border-border">{bwShow?'Hide':'Show'}</button>
+          <button onClick={()=>setBwShow(v=>!v)} className="text-xs px-2.5 py-1 rounded-lg bg-card2 border border-border button-lift">{bwShow?<><FiEye className="inline mr-1"/>Hide</>:<><FiEye className="inline mr-1"/>Show</>}</button>
         </div>
         <div className="flex gap-2">
           <input value={bw} onChange={e=>setBw(e.target.value)} placeholder="kg" type="number" inputMode="decimal" step="0.1" className="flex-1 bg-bg border border-border rounded-xl px-3 py-3" />
-          <button onClick={()=>{ const v=parseFloat(bw); if(v>0){onAddBw(v); setBw('')}}} className="px-6 py-3 rounded-xl bg-accent text-black font-semibold">Add</button>
+          <button onClick={()=>{ const v=parseFloat(bw); if(v>0){onAddBw(v); setBw('')}}} className="px-6 py-3 rounded-xl bg-accent text-black font-semibold button-lift"><FiPlus className="inline mr-1"/>Add</button>
         </div>
         {bwShow && (
           bwData.length>1
@@ -425,6 +478,9 @@ function ProgressView({routines,workouts,bws,onAddBw,onDelBw}:{routines:Routine[
 const tooltipStyle={ background:'#16161d', border:'1px solid #ffffff22', borderRadius:12, padding:'8px 10px', fontSize:12, boxShadow:'0 8px 24px rgba(0,0,0,.4)' }
 const tooltipLabel={ color:'#9ca3af', fontSize:11, fontWeight:600, marginBottom:4 }
 const tooltipItem={ color:'#fff', fontSize:13 }
+function formatMetric(value:number){
+  return Number.isInteger(value) ? value.toLocaleString() : value.toLocaleString(undefined,{maximumFractionDigits:2})
+}
 
 function ExerciseChart({name,unit,workouts}:{name:string,unit:Unit,workouts:Workout[]}){
   const history=workouts
@@ -464,7 +520,7 @@ function ExerciseChart({name,unit,workouts}:{name:string,unit:Unit,workouts:Work
     <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
       <div className="flex items-start justify-between gap-2">
         <div className="font-semibold text-sm leading-tight">{name}</div>
-        <div className="text-xs text-accent2 whitespace-nowrap">{data.length>0?`PR ${pr}${o.unit}`:'—'}</div>
+        <div className="text-xs text-accent2 whitespace-nowrap">{data.length>0?`PR ${formatMetric(pr)}${o.unit}`:'—'}</div>
       </div>
       <div className="flex flex-wrap gap-1.5">
         {opts.map(x=>(
@@ -476,7 +532,7 @@ function ExerciseChart({name,unit,workouts}:{name:string,unit:Unit,workouts:Work
           <CartesianGrid strokeDasharray="3 3" stroke="#ffffff14" />
           <XAxis dataKey="date" tick={{fill:'#9ca3af',fontSize:10}} tickLine={false} axisLine={{stroke:'#ffffff22'}} minTickGap={24} />
           <YAxis domain={['auto','auto']} tick={{fill:'#9ca3af',fontSize:10}} tickLine={false} axisLine={false} width={34} />
-          <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabel} itemStyle={tooltipItem} formatter={(v:any)=>[`${Number(v).toLocaleString()}${o.unit}`,o.l]} />
+          <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabel} itemStyle={tooltipItem} formatter={(v:any)=>[`${formatMetric(Number(v))}${o.unit}`,o.l]} />
           <Line type="monotone" dataKey={metric} name={o.l} stroke={o.color} strokeWidth={2.5} dot={{r:3,fill:o.color}} activeDot={{r:5}} connectNulls />
         </LineChart></ResponsiveContainer></div>
       ): data.length===1 ? (
@@ -489,9 +545,9 @@ function ExerciseChart({name,unit,workouts}:{name:string,unit:Unit,workouts:Work
   )
 }
 
-function Settings({routines,workouts,bws,active,onImport,onClear}:{routines:Routine[],workouts:Workout[],bws:BodyweightEntry[],active:Workout|null,onImport:(d:any)=>void,onClear:()=>void}){
+function Settings({routines,workouts,discarded,bws,active,onImport,onClear}:{routines:Routine[],workouts:Workout[],discarded:DiscardedWorkout[],bws:BodyweightEntry[],active:Workout|null,onImport:(d:any)=>void,onClear:()=>void}){
   const exp=()=>{
-    const data={routines,workouts,bodyweights:bws,activeWorkout:active, exportedAt:Date.now()}
+    const data={routines,workouts,discardedWorkouts:discarded,bodyweights:bws,activeWorkout:active, exportedAt:Date.now()}
     const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`gym-backup-${new Date().toISOString().slice(0,10)}.json`; a.click()
   }
   const imp=(e:any)=>{
@@ -499,12 +555,12 @@ function Settings({routines,workouts,bws,active,onImport,onClear}:{routines:Rout
   }
   return (
     <div className="pt-4 space-y-4">
-      <h2 className="text-xl font-bold">Settings</h2>
+      <h2 className="text-xl font-bold"><FiSettings className="inline mr-2 text-accent2"/>Settings</h2>
       <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
         <div className="text-sm font-semibold">Data</div>
-        <button onClick={exp} className="w-full py-3 rounded-xl bg-card2 border border-border">Export Data (JSON)</button>
+        <button onClick={exp} className="w-full py-3 rounded-xl bg-card2 border border-border button-lift"><FiArchive className="inline mr-2"/>Export Data (JSON)</button>
         <label className="block w-full py-3 rounded-xl bg-card2 border border-border text-center cursor-pointer">Import Data<input type="file" accept=".json" className="hidden" onChange={imp} /></label>
-        <button onClick={()=>{ if(confirm('Delete all data? This will permanently remove all routines, workout history and bodyweight data.')) onClear()}} className="w-full py-3 rounded-xl bg-red-500 text-white font-semibold">Delete All Data</button>
+        <button onClick={()=>{ if(confirm('Delete all data? This will permanently remove all routines, workout history and bodyweight data.')) onClear()}} className="w-full py-3 rounded-xl bg-red-500 text-white font-semibold button-lift"><FiTrash2 className="inline mr-2"/>Delete All Data</button>
       </div>
       <div className="text-xs text-muted text-center">Offline PWA · Data stored locally in IndexedDB<br/>Install via Share → Add to Home Screen</div>
     </div>
@@ -516,5 +572,3 @@ function fmtDate(iso:string){
   if(isNaN(d.getTime())) return iso
   return d.toLocaleDateString()
 }
-
-
