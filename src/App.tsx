@@ -7,14 +7,14 @@ import { workoutVolume } from './utils/volume'
 import { suggestion, exerciseHistory, bestPreviousSets } from './utils/progression'
 import { UNIT_LABEL, UNIT_NAME, resolveUnit } from './utils/units'
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } from 'recharts'
-import { FiActivity, FiArchive, FiArrowLeft, FiArrowRight, FiArrowUp, FiArrowDown, FiBarChart2, FiCheck, FiChevronDown, FiChevronUp, FiClock, FiEdit3, FiEye, FiHome, FiPlus, FiRefreshCw, FiSettings, FiTrash2, FiX, FiPlay, FiPause } from 'react-icons/fi'
+import { FiActivity, FiArchive, FiArrowLeft, FiArrowRight, FiArrowUp, FiArrowDown, FiBarChart2, FiCheck, FiChevronDown, FiChevronUp, FiClock, FiEdit3, FiEye, FiHome, FiPlus, FiRefreshCw, FiSettings, FiTrash2, FiX, FiPlay, FiPause, FiSkipForward } from 'react-icons/fi'
 
 type Tab = 'home'|'routines'|'history'|'progress'|'settings'
 type View = { tab: Tab, routineId?: string, workoutId?: string }
 
 function buildWorkout(r:Routine):Workout{
   const exs:WorkoutExercise[]=[]
-  r.blocks.sort((a,b)=>a.order-b.order).forEach(b=>b.exercises.sort((a,b)=>a.order-b.order).forEach(e=>exs.push({exerciseId:e.id, exerciseName:e.name, blockName:b.name, targetSets:e.sets, targetReps:e.targetReps, restSeconds:e.restSeconds, unit:resolveUnit(e), sets:Array.from({length:e.sets},()=>({weight:0,reps:0,completed:false}))})))
+  r.blocks.slice().sort((a,b)=>a.order-b.order).forEach(b=>b.exercises.slice().sort((a,b)=>a.order-b.order).forEach(e=>exs.push({exerciseId:e.id, exerciseName:e.name, blockName:b.name, targetSets:e.sets, targetReps:e.targetReps, restSeconds:e.restSeconds, unit:resolveUnit(e), sets:Array.from({length:e.sets},()=>({weight:0,reps:0,completed:false}))})))
   return {id:uid(), routineId:r.id, routineName:r.name, snapshot:r, startedAt:Date.now(), exercises:exs}
 }
 
@@ -253,7 +253,7 @@ function RoutineEditor({routine,onSave,onBack}:{routine:Routine,onSave:(r:Routin
 }
 
 function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{workout:Workout,workouts:Workout[],onChange:(w:Workout)=>void,onFinish:()=>void,onDiscard:()=>void,onSave:(w:Workout)=>void}){
-  const [idx,setIdx]=useState(0)
+  const [idx,setIdx]=useState(()=>Math.max(0,workout.exercises.findIndex(e=>!e.skipped)))
   const [timer,setTimer]=useState(0)
   const [run,setRun]=useState(false)
   const [previousOpen,setPreviousOpen]=useState(false)
@@ -265,6 +265,13 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
   const sug=suggestion(ex.exerciseName, ex.targetSets, ex.targetReps, workouts)
   const curSetIdx=ex.sets.findIndex(s=>!s.completed)
   const doneCount=ex.sets.filter(s=>s.completed).length
+  const activeExercises=workout.exercises.filter(e=>!e.skipped)
+  useEffect(()=>{
+    if(workout.exercises[idx]?.skipped){
+      const next=workout.exercises.findIndex(e=>!e.skipped)
+      if(next>=0) setIdx(next)
+    }
+  },[idx,workout.exercises])
   useEffect(()=>{ if(!run) return; const id=setInterval(()=>setTimer(t=>unit==='time'?Math.max(0,t-1):t+1),1000); return ()=>clearInterval(id)},[run,unit])
   useEffect(()=>{ if(unit==='time' && timer===0) setRun(false)},[timer,unit])
   useEffect(()=>{ if(unit==='time') setTimer(parseInt(ex.targetReps)||0); else setTimer(0); setRun(false); setPreviousIndex(0); setPreviousOpen(false) },[idx,unit,ex.targetReps])
@@ -276,8 +283,26 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
     const n={...workout, exercises: workout.exercises.map((e,i)=> i!==idx?e:{...e, sets:[...e.sets,{weight:0,reps:0,completed:false}]})}
     onChange(n); onSave(n)
   }
+  const skipExercise=()=>{
+    const n={...workout, exercises:workout.exercises.map((e,i)=>i===idx?{...e,skipped:true}:e)}
+    onChange(n); onSave(n)
+    setRun(false)
+    const next=n.exercises.findIndex((e,i)=>i>idx&&!e.skipped)
+    const first=n.exercises.findIndex(e=>!e.skipped)
+    setIdx(next>=0?next:first>=0?first:idx)
+  }
   const fmtSet=(s:typeof ex.sets[number]):string=> unit==='time'? `${s.weight||0}${UNIT_LABEL[unit]}` : unit==='reps'? `${s.reps||0} reps` : `${s.weight||0} kg × ${s.reps||0}`
-  const pct=Math.round((workout.exercises.filter(e=>e.sets.every(s=>s.completed)).length/workout.exercises.length)*100)
+  const pct=activeExercises.length?Math.round((activeExercises.filter(e=>e.sets.every(s=>s.completed)).length/activeExercises.length)*100):100
+  if(!activeExercises.length) return (
+    <div className="min-h-screen bg-bg p-4 flex flex-col justify-center gap-4">
+      <div className="bg-card border border-border rounded-2xl p-5 text-center">
+        <FiSkipForward className="mx-auto text-accent2 text-3xl mb-3"/>
+        <div className="font-bold text-lg">All exercises skipped</div>
+        <div className="text-sm text-muted mt-1">You can finish this workout without changing the routine.</div>
+      </div>
+      <button onClick={onFinish} className="w-full py-4 rounded-2xl bg-emerald-600 font-bold text-lg button-lift"><FiCheck className="inline mr-2"/>FINISH WORKOUT</button>
+    </div>
+  )
   return (
     <div className="min-h-screen bg-bg pb-6">
       <div className="sticky top-0 bg-card border-b border-border px-4 py-3 flex justify-between items-center" style={{paddingTop:'calc(12px + env(safe-area-inset-top))'}}>
@@ -291,6 +316,7 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
           <div className="text-xl font-bold mt-1">{ex.exerciseName}</div>
           <div className="text-xs text-muted mt-1">{ex.targetSets} × {ex.targetReps} · rest {ex.restSeconds}s</div>
           <div className="text-xs text-emerald-400 mt-1">{doneCount}/{ex.targetSets} sets done</div>
+          <button onClick={skipExercise} className="mt-3 w-full py-2.5 rounded-xl bg-card2 border border-border text-xs text-muted button-lift"><FiSkipForward className="inline mr-2"/>Skip exercise for this workout</button>
         </div>
 
         <div className="bg-card border border-border rounded-2xl p-4 space-y-2">
@@ -344,11 +370,11 @@ function ActiveWorkout({workout,workouts,onChange,onFinish,onDiscard,onSave}:{wo
           <div className="text-xs tracking-widest text-dim">ALL EXERCISES</div>
           {workout.exercises.map((e,i)=>{
             const done=e.sets.every(s=>s.completed)
-            return <button key={i} onClick={()=>setIdx(i)} className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm flex justify-between ${i===idx?'bg-accent border-accent text-black':'bg-card text-white border-border'} ${done?'opacity-60':''}`}><span>{e.blockName} · {e.exerciseName}</span><span>{e.sets.filter(s=>s.completed).length}/{e.targetSets}</span></button>
+            return <button key={i} disabled={e.skipped} onClick={()=>setIdx(i)} className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm flex justify-between ${i===idx?'bg-accent border-accent text-black':'bg-card text-white border-border'} ${done||e.skipped?'opacity-60':''}`}><span>{e.blockName} · {e.exerciseName}{e.skipped&&<span className="ml-2 text-xs"><FiSkipForward className="inline"/> skipped</span>}</span><span>{e.skipped?'—':`${e.sets.filter(s=>s.completed).length}/${e.targetSets}`}</span></button>
           })}
         </div>
 
-        <button onClick={()=>{ if(confirm(`Finish workout? ${workout.exercises.filter(e=>e.sets.some(s=>s.completed)).length}/${workout.exercises.length} exercises touched`)) onFinish()}} className="w-full py-4 rounded-2xl bg-emerald-600 font-bold text-lg">FINISH WORKOUT</button>
+        <button onClick={()=>{ if(confirm(`Finish workout? ${activeExercises.filter(e=>e.sets.some(s=>s.completed)).length}/${activeExercises.length} exercises touched`)) onFinish()}} className="w-full py-4 rounded-2xl bg-emerald-600 font-bold text-lg">FINISH WORKOUT</button>
         <div className="h-6" />
       </div>
     </div>
@@ -488,16 +514,16 @@ function ExerciseChart({name,unit,workouts}:{name:string,unit:Unit,workouts:Work
     .sort((a,b)=>a.completedAt!-b.completedAt!)
   const data=history.map(w=>{
     const e=w.exercises.find(x=>x.exerciseName===name)!
-    const c=e.sets.filter(s=>s.completed)
     const u=resolveUnit(e)
+    const c=e.skipped ? [] : e.sets.filter(s=>s.completed && (u==='time' ? s.weight>0 : u==='reps' ? s.reps>0 : s.weight>0 && s.reps>0))
     const load=c.map(s=> u==='time'? s.weight : u==='reps'? s.reps : s.weight)
     const reps=c.map(s=>s.reps)
     const maxL=c.length?Math.max(...load):0
     const meanL=c.length?load.reduce((a,b)=>a+b,0)/c.length:0
     const vol= u==='time'? c.reduce((a,s)=>a+s.weight,0) : u==='reps'? c.reduce((a,s)=>a+s.reps,0) : c.reduce((a,s)=>a+s.weight*s.reps,0)
     const maxReps=reps.length?Math.max(...reps):0
-    return {date:new Date(w.completedAt!).toLocaleDateString(), maxW:maxL, meanW:meanL, vol, maxReps, sets:c.length}
-  })
+    return c.length ? {date:new Date(w.completedAt!).toLocaleDateString(), maxW:maxL, meanW:meanL, vol, maxReps, sets:c.length} : null
+  }).filter((entry):entry is {date:string,maxW:number,meanW:number,vol:number,maxReps:number,sets:number}=>entry!==null)
   const isReps=unit==='reps'
   const isTime=unit==='time'
   const [metric,setMetric]=useState<'maxW'|'meanW'|'vol'|'maxReps'>(isTime||isReps?'maxW':'maxW')
