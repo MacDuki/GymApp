@@ -24,6 +24,7 @@ Everything runs locally on your device: routines, workouts, history, progress tr
 - View **previous performance** for each exercise.
 - Receive a **simple progressive-overload suggestion** based on your last workout.
 - **MANUAL TIMER** — a circular timer that starts only when requested; timed exercises count down from their target and support `+10s`, while other exercises count upward freely.
+- Puedes descartar ejercicios individualmente durante un workout sin modificar la rutina guardada; quedan marcados solo en ese entrenamiento.
 - Blocks stay visually grouped so you always know where you are in the routine.
 - Progress is preserved when navigating between exercises.
 
@@ -39,6 +40,7 @@ Everything runs locally on your device: routines, workouts, history, progress tr
 
 ### 📈 Progress Tracking
 - Per-exercise weight progression chart.
+- Las gráficas ignoran series y ejercicios completados con valores de rendimiento `0` para no distorsionar promedios ni progresiones.
 - Track **highest weight**, **highest volume** and reps across workouts.
 - **PR (personal record)** highlights.
 - Optional **bodyweight** tracker with its own progression chart — independent of workouts.
