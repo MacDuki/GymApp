@@ -183,6 +183,25 @@ Each includes mobility, core, calves/forearms and a main routine, structured acr
 
 ---
 
+### Exercise demonstrations (optional, offline)
+
+The existing routine remains the source of truth. On the first connection, the
+app reads the Spanish static catalog from
+[Exercise Gym GIFs DB](https://jahelcuadrado.github.io/ExerciseGymGifsDB/) and
+uses conservative name matching (normalization, curated aliases and ambiguity
+rejection). It downloads only the GIFs matched to exercises in the user's
+routines, stores metadata and blobs in the `exerciseContent`,
+`exerciseCatalog` and `exerciseResources` IndexedDB stores, and never requests
+those resources during a workout. Failed items can be retried from Settings;
+the routine is never blocked by synchronization.
+
+The integration is pinned to `v1.1.0` and validates HTTP responses and image
+blobs before marking an item as downloaded. The source README states that the
+GIFs belong to their respective authors and that the database does not grant
+redistribution rights. The app therefore displays the source limitation and
+does not claim ownership; deployments should obtain any permissions required
+for their use case.
+
 ## 📄 License
 
 Private project.
